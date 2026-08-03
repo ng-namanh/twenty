@@ -1,4 +1,3 @@
-import { APP_FILTER } from '@nestjs/core';
 import { type NestExpressApplication } from '@nestjs/platform-express';
 import {
   Test,
@@ -16,10 +15,7 @@ import { StripeSDKService } from 'src/engine/core-modules/billing/stripe/stripe-
 import { CaptchaDriverFactory } from 'src/engine/core-modules/captcha/captcha-driver.factory';
 import { ExceptionHandlerService } from 'src/engine/core-modules/exception-handler/exception-handler.service';
 import { ExceptionHandlerMockService } from 'src/engine/core-modules/exception-handler/mocks/exception-handler-mock.service';
-import { MockedUnhandledExceptionFilter } from 'src/engine/core-modules/exception-handler/mocks/mock-unhandled-exception.filter';
-import { SyncDriver } from 'src/engine/core-modules/message-queue/drivers/sync.driver';
 import { JobsModule } from 'src/engine/core-modules/message-queue/jobs.module';
-import { QUEUE_DRIVER } from 'src/engine/core-modules/message-queue/message-queue.constants';
 import { MessageQueueModule } from 'src/engine/core-modules/message-queue/message-queue.module';
 
 interface TestingModuleCreatePreHook {
@@ -33,10 +29,6 @@ export type TestingAppCreatePreHook = (
   app: NestExpressApplication,
 ) => Promise<void>;
 
-// Shared SyncDriver instance for all queues in tests
-// This enables synchronous processing of jobs during integration tests
-const syncDriver = new SyncDriver();
-
 /**
  * Sets basic integration testing module of app
  */
@@ -49,17 +41,7 @@ export const createApp = async (
   const stripeSDKMockService = new StripeSDKMockService();
   const mockExceptionHandlerService = new ExceptionHandlerMockService();
   let moduleBuilder: TestingModuleBuilder = Test.createTestingModule({
-    imports: [
-      AppModule,
-      JobsModule,
-      MessageQueueModule.registerExplorer(),
-    ],
-    providers: [
-      {
-        provide: APP_FILTER,
-        useClass: MockedUnhandledExceptionFilter,
-      },
-    ],
+    imports: [AppModule, JobsModule, MessageQueueModule.registerExplorer()],
   })
     .overrideProvider(StripeSDKService)
     .useValue(stripeSDKMockService)
@@ -70,9 +52,7 @@ export const createApp = async (
       getCurrentDriver: () => ({
         validate: async () => ({ success: true }),
       }),
-    })
-    .overrideProvider(QUEUE_DRIVER)
-    .useValue(syncDriver);
+    });
 
   if (config.moduleBuilderHook) {
     moduleBuilder = config.moduleBuilderHook(moduleBuilder);

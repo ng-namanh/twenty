@@ -1,16 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
-import { assertUnreachable } from 'twenty-shared/utils';
+import { getValidTimeZoneOrUndefined } from 'twenty-shared/utils';
 
 import { COMMON_PRELOAD_TOOLS } from 'src/engine/core-modules/tool-provider/constants/common-preload-tools.const';
-import { ToolCategory } from 'twenty-shared/ai';
 import { ToolRegistryService } from 'src/engine/core-modules/tool-provider/services/tool-registry.service';
-import {
-  EXECUTE_TOOL_TOOL_NAME,
-  LEARN_TOOLS_TOOL_NAME,
-  LOAD_SKILL_TOOL_NAME,
-} from 'src/engine/core-modules/tool-provider/tools';
+import { LOAD_SKILL_TOOL_NAME } from 'src/engine/core-modules/tool-provider/tools';
 import { type ToolIndexEntry } from 'src/engine/core-modules/tool-provider/types/tool-index-entry.type';
+import { buildToolCatalogSection } from 'src/engine/core-modules/tool-provider/utils/build-tool-catalog-section.util';
 import {
   AgentActorContextService,
   type UserContext,
@@ -100,7 +96,7 @@ export class SystemPromptBuilderService {
       });
     }
 
-    const toolSection = this.buildToolCatalogSection(
+    const toolSection = buildToolCatalogSection(
       toolCatalog,
       COMMON_PRELOAD_TOOLS,
     );
@@ -136,7 +132,6 @@ export class SystemPromptBuilderService {
     toolCatalog: ToolIndexEntry[],
     skillCatalog: FlatSkill[],
     preloadedTools: string[],
-    contextString?: string,
     storedFiles?: Array<{
       filename: string;
       fileId: string;
@@ -146,6 +141,7 @@ export class SystemPromptBuilderService {
   ): string {
     const parts: string[] = [
       CHAT_SYSTEM_PROMPTS.BASE,
+      CHAT_SYSTEM_PROMPTS.BROWSING_CONTEXT_INSTRUCTION,
       CHAT_SYSTEM_PROMPTS.RESPONSE_FORMAT,
     ];
 
@@ -157,17 +153,16 @@ export class SystemPromptBuilderService {
       parts.push(this.buildUserContextSection(userContext));
     }
 
-    parts.push(this.buildToolCatalogSection(toolCatalog, preloadedTools));
-    parts.push(this.buildSkillCatalogSection(skillCatalog));
+    parts.push(buildToolCatalogSection(toolCatalog, preloadedTools));
+
+    const skillSection = this.buildSkillCatalogSection(skillCatalog);
+
+    if (skillSection) {
+      parts.push(skillSection);
+    }
 
     if (storedFiles && storedFiles.length > 0) {
       parts.push(this.buildUploadedFilesSection(storedFiles));
-    }
-
-    if (contextString) {
-      parts.push(
-        `\nCONTEXT (what the user is currently viewing):\n${contextString}`,
-      );
     }
 
     return parts.join('\n');
@@ -188,14 +183,28 @@ ${instructions}`;
       `Locale: ${userContext.locale}`,
     ];
 
-    if (userContext.timezone) {
-      parts.push(`Timezone: ${userContext.timezone}`);
+    const resolvedTimeZone = getValidTimeZoneOrUndefined(userContext.timezone);
+
+    if (resolvedTimeZone) {
+      parts.push(`Timezone: ${resolvedTimeZone}`);
     }
+
+    parts.push(`Current date: ${this.formatCurrentDate(userContext.timezone)}`);
 
     return `
 ## User Context
 
 ${parts.join('\n')}`;
+  }
+
+  private formatCurrentDate(timezone: string | null): string {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: getValidTimeZoneOrUndefined(timezone),
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(new Date());
   }
 
   buildUploadedFilesSection(
@@ -240,92 +249,5 @@ Skills provide detailed expertise for specialized tasks. Load a skill before att
 To load a skill, call \`${LOAD_SKILL_TOOL_NAME}\` with the skill name(s).
 
 ${skillsList}`;
-  }
-
-  buildToolCatalogSection(
-    toolCatalog: ToolIndexEntry[],
-    preloadedTools: string[],
-  ): string {
-    const preloadedSet = new Set(preloadedTools);
-
-    const toolsByCategory = new Map<string, ToolIndexEntry[]>();
-
-    for (const tool of toolCatalog) {
-      const category = tool.category;
-      const existing = toolsByCategory.get(category) ?? [];
-
-      existing.push(tool);
-      toolsByCategory.set(category, existing);
-    }
-
-    const sections: string[] = [];
-
-    const preloadedList =
-      preloadedTools.length > 0
-        ? preloadedTools.map((toolName) => `- \`${toolName}\` ✓`).join('\n')
-        : '(none)';
-
-    sections.push(`
-## Available Tools
-
-You have access to ${toolCatalog.length} tools. Some are pre-loaded and ready to use immediately.
-To use any other tool, first call \`${LEARN_TOOLS_TOOL_NAME}\` to learn its schema, then call \`${EXECUTE_TOOL_TOOL_NAME}\` to run it.
-
-### Pre-loaded Tools (ready to use now)
-${preloadedList}
-
-### Tool Catalog by Category`);
-
-    const categoryOrder = Object.values(ToolCategory);
-
-    for (const category of categoryOrder) {
-      const tools = toolsByCategory.get(category);
-
-      if (!tools || tools.length === 0) {
-        continue;
-      }
-
-      const categoryLabel = this.getCategoryLabel(category);
-
-      sections.push(`
-#### ${categoryLabel} (${tools.length} tools)
-${tools
-  .map((tool) => {
-    const status = preloadedSet.has(tool.name) ? ' ✓' : '';
-
-    return `- \`${tool.name}\`${status}`;
-  })
-  .join('\n')}`);
-    }
-
-    sections.push(`
-### How to Use Tools
-1. **Pre-loaded tools** (marked with ✓): Use directly
-2. **Other tools**: First call \`${LEARN_TOOLS_TOOL_NAME}({toolNames: ["tool_name"]})\` to learn the schema, then call \`${EXECUTE_TOOL_TOOL_NAME}({toolName: "tool_name", arguments: {...}})\` to run it`);
-
-    return sections.join('\n');
-  }
-
-  private getCategoryLabel(category: ToolCategory): string {
-    switch (category) {
-      case ToolCategory.DATABASE_CRUD:
-        return 'Database Tools (CRUD operations)';
-      case ToolCategory.ACTION:
-        return 'Action Tools (HTTP, Email, etc.)';
-      case ToolCategory.WORKFLOW:
-        return 'Workflow Tools (create/manage workflows)';
-      case ToolCategory.METADATA:
-        return 'Metadata Tools (schema management)';
-      case ToolCategory.VIEW:
-        return 'View Tools (manage views, filters, and sorts)';
-      case ToolCategory.DASHBOARD:
-        return 'Dashboard Tools (create/manage dashboards)';
-      case ToolCategory.LOGIC_FUNCTION:
-        return 'Logic Functions (custom tools)';
-      case ToolCategory.VIEW_FIELD:
-        return 'View Field Tools (manage view columns)';
-      default:
-        return assertUnreachable(category);
-    }
   }
 }

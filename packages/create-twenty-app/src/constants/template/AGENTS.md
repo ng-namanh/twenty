@@ -43,25 +43,28 @@
 
 ## Common Pitfalls
 
-- Creating an object without an index view associated. Unless this is a technical object, user will need to visualize it.
 - Creating a view without a navigationMenuItem associated. This will make the view available on the left sidebar.
 - Creating a front-end component that has a scroll instead of being responsive to its fixed widget height and width, unless it is specifically meant to be used in a canvas tab.
 
 ## Best practice
 
-It's highly recommended to create new app entities using `yarn twenty add`. These are the options:
+It's highly recommended to create new app entities using `yarn twenty dev:add`. These are the options:
 
-| Entity type          | Command                              | Generated file                        |
-| -------------------- | ------------------------------------ | ------------------------------------- |
-| Object               | `yarn twenty add object`             | `src/objects/<name>.ts`               |
-| Field                | `yarn twenty add field`              | `src/fields/<name>.ts`                |
-| Logic function       | `yarn twenty add logicFunction`      | `src/logic-functions/<name>.ts`       |
-| Front component      | `yarn twenty add frontComponent`     | `src/front-components/<name>.tsx`     |
-| Role                 | `yarn twenty add role`               | `src/roles/<name>.ts`                 |
-| Skill                | `yarn twenty add skill`              | `src/skills/<name>.ts`                |
-| Agent                | `yarn twenty add agent`              | `src/agents/<name>.ts`                |
-| View                 | `yarn twenty add view`               | `src/views/<name>.ts`                 |
-| Navigation menu item | `yarn twenty add navigationMenuItem` | `src/navigation-menu-items/<name>.ts` |
-| Page layout          | `yarn twenty add pageLayout`         | `src/page-layouts/<name>.ts`          |
+| Entity type          | Command                                  | Generated file                        |
+| -------------------- | ---------------------------------------- | ------------------------------------- |
+| Object               | `yarn twenty dev:add object`             | `src/objects/<name>.ts`               |
+| Field                | `yarn twenty dev:add field`              | `src/fields/<name>.ts`                |
+| Logic function       | `yarn twenty dev:add logicFunction`      | `src/logic-functions/<name>.ts`       |
+| Front component      | `yarn twenty dev:add frontComponent`     | `src/front-components/<name>.tsx`     |
+| Role                 | `yarn twenty dev:add role`               | `src/roles/<name>.ts`                 |
+| Skill                | `yarn twenty dev:add skill`              | `src/skills/<name>.ts`                |
+| Agent                | `yarn twenty dev:add agent`              | `src/agents/<name>.ts`                |
+| View                 | `yarn twenty dev:add view`               | `src/views/<name>.ts`                 |
+| Navigation menu item | `yarn twenty dev:add navigationMenuItem` | `src/navigation-menu-items/<name>.ts` |
+| Page layout          | `yarn twenty dev:add pageLayout`         | `src/page-layouts/<name>.ts`          |
+| Page layout tab      | `yarn twenty dev:add pageLayoutTab`      | `src/page-layout-tabs/<name>.ts`      |
+| Command menu item    | `yarn twenty dev:add commandMenuItem`    | `src/command-menu-items/<name>.ts`    |
+| View field           | `yarn twenty dev:add viewField`          | `src/view-fields/<name>.ts`           |
+| Connection provider  | `yarn twenty dev:add connectionProvider` | `src/connection-providers/<name>.ts`  |
 
 This helps automatically generate required IDs etc.

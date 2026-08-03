@@ -12,6 +12,7 @@ import { getAuthExceptionRestStatus } from 'src/engine/core-modules/auth/utils/g
 import { ExceptionHandlerService } from 'src/engine/core-modules/exception-handler/exception-handler.service';
 import { ErrorCode } from 'src/engine/core-modules/graphql/utils/graphql-errors.util';
 import { JwtWrapperService } from 'src/engine/core-modules/jwt/services/jwt-wrapper.service';
+import { type FlatWorkspace } from 'src/engine/core-modules/workspace/types/flat-workspace.type';
 import { WorkspaceManyOrAllFlatEntityMapsCacheService } from 'src/engine/metadata-modules/flat-entity/services/workspace-many-or-all-flat-entity-maps-cache.service';
 import { INTERNAL_SERVER_ERROR } from 'src/engine/middlewares/constants/default-error-message.constant';
 import { bindDataToRequestObject } from 'src/engine/utils/bind-data-to-request-object.util';
@@ -38,7 +39,7 @@ export class MiddlewareService {
     return !!token;
   }
 
-  // oxlint-disable-next-line @typescripttypescript/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   public writeRestResponseOnExceptionCaught(res: Response, error: any) {
     const statusCode = this.getStatus(error);
 
@@ -61,7 +62,7 @@ export class MiddlewareService {
     res.end();
   }
 
-  // oxlint-disable-next-line @typescripttypescript/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   public writeGraphqlResponseOnExceptionCaught(res: Response, error: any) {
     let errors;
 
@@ -100,9 +101,7 @@ export class MiddlewareService {
   public async hydrateRestRequest(request: Request) {
     const data = await this.accessTokenService.validateTokenByRequest(request);
     const metadataVersion = data.workspace
-      ? await this.workspaceStorageCacheService.getMetadataVersion(
-          data.workspace.id,
-        )
+      ? await this.getOrSeedMetadataVersion(data.workspace)
       : undefined;
 
     if (!data.workspace) {
@@ -127,19 +126,37 @@ export class MiddlewareService {
 
     const data = await this.accessTokenService.validateTokenByRequest(request);
     const metadataVersion = data.workspace
-      ? await this.workspaceStorageCacheService.getMetadataVersion(
-          data.workspace.id,
-        )
+      ? await this.getOrSeedMetadataVersion(data.workspace)
       : undefined;
 
     bindDataToRequestObject(data, request, metadataVersion);
+  }
+
+  private async getOrSeedMetadataVersion(
+    workspace: Pick<FlatWorkspace, 'id' | 'metadataVersion'>,
+  ): Promise<number | undefined> {
+    const cachedMetadataVersion =
+      await this.workspaceStorageCacheService.getMetadataVersion(workspace.id);
+
+    if (isDefined(cachedMetadataVersion)) {
+      return cachedMetadataVersion;
+    }
+
+    if (isDefined(workspace.metadataVersion)) {
+      await this.workspaceStorageCacheService.setMetadataVersion(
+        workspace.id,
+        workspace.metadataVersion,
+      );
+    }
+
+    return workspace.metadataVersion;
   }
 
   private hasErrorStatus(error: unknown): error is { status: number } {
     return isDefined((error as { status: number })?.status);
   }
 
-  // oxlint-disable-next-line @typescripttypescript/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   private getStatus(error: any): number {
     if (this.hasErrorStatus(error)) {
       return error.status;

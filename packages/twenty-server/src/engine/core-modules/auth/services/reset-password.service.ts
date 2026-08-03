@@ -4,10 +4,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import crypto from 'crypto';
 
 import { msg } from '@lingui/core/macro';
-import { render } from '@react-email/render';
 import { addMilliseconds, differenceInMilliseconds } from 'date-fns';
 import ms from 'ms';
-import { PasswordResetLinkEmail } from 'twenty-emails';
+import { PasswordResetLinkEmail, renderEmail } from 'twenty-emails';
 import { type APP_LOCALES } from 'twenty-shared/translations';
 import { AppPath } from 'twenty-shared/types';
 import {
@@ -62,9 +61,10 @@ export class ResetPasswordService {
       }),
     );
 
-    const targetWorkspaceId =
-      workspaceId ??
-      (await this.findFirstPasswordAuthEnabledWorkspaceIdOrThrow(user.id));
+    const targetWorkspaceId = await this.resolveTargetWorkspaceId(
+      user.id,
+      workspaceId,
+    );
 
     const expiresIn = this.twentyConfigService.get(
       'PASSWORD_RESET_TOKEN_EXPIRES_IN',
@@ -124,6 +124,31 @@ export class ResetPasswordService {
     };
   }
 
+  private async resolveTargetWorkspaceId(
+    userId: string,
+    workspaceId?: string,
+  ): Promise<string> {
+    if (!isDefined(workspaceId)) {
+      return this.findFirstPasswordAuthEnabledWorkspaceIdOrThrow(userId);
+    }
+
+    const requestedWorkspace = await this.workspaceRepository.findOne({
+      where: {
+        id: workspaceId,
+        isPasswordAuthEnabled: true,
+        workspaceUsers: {
+          user: {
+            id: userId,
+          },
+        },
+      },
+    });
+
+    return isDefined(requestedWorkspace)
+      ? requestedWorkspace.id
+      : this.findFirstPasswordAuthEnabledWorkspaceIdOrThrow(userId);
+  }
+
   async sendEmailPasswordResetLink({
     resetToken,
     email,
@@ -171,8 +196,8 @@ export class ResetPasswordService {
 
     const emailTemplate = PasswordResetLinkEmail(emailData);
 
-    const html = await render(emailTemplate, { pretty: true });
-    const text = await render(emailTemplate, { plainText: true });
+    const html = await renderEmail(emailTemplate, { pretty: true });
+    const text = await renderEmail(emailTemplate, { plainText: true });
 
     const i18n = this.i18nService.getI18nInstance(locale);
     const subjectTemplate = hasPassword

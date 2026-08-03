@@ -1,7 +1,8 @@
 import { CombinedGraphQLErrors } from '@apollo/client/errors';
 import { useApolloClient } from '@apollo/client/react';
+import { t } from '@lingui/core/macro';
 import { useStore } from 'jotai';
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { type ExtendedUIMessage } from 'twenty-shared/ai';
 import { isDefined, isValidUuid } from 'twenty-shared/utils';
 import { v4 } from 'uuid';
@@ -16,12 +17,15 @@ import { STOP_AGENT_CHAT_STREAM } from '@/ai/graphql/mutations/stopAgentChatStre
 import { useAgentChatModelId } from '@/ai/hooks/useAgentChatModelId';
 import { useGetBrowsingContext } from '@/ai/hooks/useBrowsingContext';
 import { useOptimisticallyUnarchiveOnSend } from '@/ai/hooks/useOptimisticallyUnarchiveOnSend';
+import { useWorkspaceAiModelAvailability } from '@/ai/hooks/useWorkspaceAiModelAvailability';
 import {
   AGENT_CHAT_NEW_THREAD_DRAFT_KEY,
   agentChatDraftsByThreadIdState,
 } from '@/ai/states/agentChatDraftsByThreadIdState';
 import { agentChatErrorComponentFamilyState } from '@/ai/states/agentChatErrorComponentFamilyState';
 import { agentChatInputState } from '@/ai/states/agentChatInputState';
+import { agentChatIsAwaitingFirstChunkComponentFamilyState } from '@/ai/states/agentChatIsAwaitingFirstChunkComponentFamilyState';
+import { agentChatLastSentBrowsingContextFamilyState } from '@/ai/states/agentChatLastSentBrowsingContextFamilyState';
 import { agentChatMessagesComponentFamilyState } from '@/ai/states/agentChatMessagesComponentFamilyState';
 import { agentChatSelectedFilesState } from '@/ai/states/agentChatSelectedFilesState';
 import { agentChatUploadedFilesState } from '@/ai/states/agentChatUploadedFilesState';
@@ -30,13 +34,13 @@ import { useListenToBrowserEvent } from '@/browser-event/hooks/useListenToBrowse
 import { dispatchBrowserEvent } from '@/browser-event/utils/dispatchBrowserEvent';
 import { useSnackBar } from '@/ui/feedback/snack-bar-manager/hooks/useSnackBar';
 import { useAtomState } from '@/ui/utilities/state/jotai/hooks/useAtomState';
-import { useAtomStateValue } from '@/ui/utilities/state/jotai/hooks/useAtomStateValue';
 import { useSetAtomState } from '@/ui/utilities/state/jotai/hooks/useSetAtomState';
 
 export const useAgentChat = (
   ensureThreadIdForSend: () => Promise<string | null>,
 ) => {
   const { modelIdForRequest } = useAgentChatModelId();
+  const { enabledModels } = useWorkspaceAiModelAvailability();
   const { getBrowsingContext } = useGetBrowsingContext();
   const { applyOptimisticUnarchive } = useOptimisticallyUnarchiveOnSend();
   const apolloClient = useApolloClient();
@@ -44,11 +48,7 @@ export const useAgentChat = (
   const setCurrentAiChatThread = useSetAtomState(currentAiChatThreadState);
   const store = useStore();
 
-  const agentChatSelectedFiles = useAtomStateValue(agentChatSelectedFilesState);
-
-  const [, setPendingThreadIdAfterFirstSend] = useState<string | null>(null);
-
-  const [agentChatUploadedFiles, setAgentChatUploadedFiles] = useAtomState(
+  const setAgentChatUploadedFiles = useSetAtomState(
     agentChatUploadedFilesState,
   );
 
@@ -74,11 +74,21 @@ export const useAgentChat = (
       return;
     }
 
-    const isLoading = agentChatSelectedFiles.length > 0;
+    if (enabledModels.length === 0) {
+      enqueueErrorSnackBar({
+        message: t`No AI models are enabled in this workspace.`,
+      });
 
-    if (isLoading) {
       return;
     }
+
+    const agentChatSelectedFiles = store.get(agentChatSelectedFilesState.atom);
+
+    if (agentChatSelectedFiles.length > 0) {
+      return;
+    }
+
+    const agentChatUploadedFiles = store.get(agentChatUploadedFilesState.atom);
 
     const threadId = await ensureThreadIdForSend();
 
@@ -87,7 +97,7 @@ export const useAgentChat = (
     }
 
     if (draftKey === AGENT_CHAT_NEW_THREAD_DRAFT_KEY) {
-      setPendingThreadIdAfterFirstSend(threadId);
+      setCurrentAiChatThread(threadId);
     }
 
     setAgentChatInput('');
@@ -97,6 +107,17 @@ export const useAgentChat = (
     }));
 
     const browsingContext = getBrowsingContext();
+    const lastSentBrowsingContextAtom =
+      agentChatLastSentBrowsingContextFamilyState.atomFamily(threadId);
+    const lastSentBrowsingContext = store.get(lastSentBrowsingContextAtom);
+    const isBrowsingContextChanged =
+      lastSentBrowsingContext === undefined
+        ? browsingContext !== null
+        : JSON.stringify(browsingContext) !==
+          JSON.stringify(lastSentBrowsingContext);
+    const browsingContextToSend = isBrowsingContextChanged
+      ? browsingContext
+      : null;
     const messageId = v4();
     const optimisticMessageCreatedAt = new Date().toISOString();
     const rollbackOptimisticUnarchive = applyOptimisticUnarchive(
@@ -125,13 +146,23 @@ export const useAgentChat = (
       instanceId: AGENT_CHAT_INSTANCE_ID,
       familyKey: { threadId },
     });
+    const isAwaitingFirstChunkAtom =
+      agentChatIsAwaitingFirstChunkComponentFamilyState.atomFamily({
+        instanceId: AGENT_CHAT_INSTANCE_ID,
+        familyKey: { threadId },
+      });
 
     const currentMessages = store.get(messagesAtom);
 
     store.set(messagesAtom, [...currentMessages, optimisticUserMessage]);
     store.set(errorAtom, null);
+    store.set(isAwaitingFirstChunkAtom, true);
 
-    const fileIds = agentChatUploadedFiles.map((file) => file.fileId);
+    const fileAttachments = agentChatUploadedFiles.map((file) => ({
+      id: file.fileId,
+      filename: file.filename,
+    }));
+    const uploadedFilesSnapshot = agentChatUploadedFiles;
 
     setAgentChatUploadedFiles([]);
 
@@ -148,11 +179,16 @@ export const useAgentChat = (
           threadId,
           text: contentToSend,
           messageId,
-          browsingContext: browsingContext ?? null,
+          browsingContext: browsingContextToSend,
           modelId: modelIdForRequest ?? undefined,
-          fileIds: fileIds.length > 0 ? fileIds : undefined,
+          fileAttachments:
+            fileAttachments.length > 0 ? fileAttachments : undefined,
         },
       });
+
+      if (isBrowsingContextChanged) {
+        store.set(lastSentBrowsingContextAtom, browsingContext);
+      }
 
       if (data?.sendChatMessage?.queued) {
         const latestMessages = store.get(messagesAtom);
@@ -161,17 +197,10 @@ export const useAgentChat = (
           messagesAtom,
           latestMessages.filter((message) => message.id !== messageId),
         );
+        store.set(isAwaitingFirstChunkAtom, false);
       }
 
       dispatchBrowserEvent(AGENT_CHAT_REFETCH_MESSAGES_EVENT_NAME);
-
-      setPendingThreadIdAfterFirstSend((pendingId) => {
-        if (isDefined(pendingId)) {
-          setCurrentAiChatThread(pendingId);
-        }
-
-        return null;
-      });
     } catch (error) {
       const restoredDraftKey =
         draftKey === AGENT_CHAT_NEW_THREAD_DRAFT_KEY ? threadId : draftKey;
@@ -186,6 +215,7 @@ export const useAgentChat = (
           ? { [AGENT_CHAT_NEW_THREAD_DRAFT_KEY]: '' }
           : {}),
       }));
+      setAgentChatUploadedFiles(uploadedFilesSnapshot);
 
       const latestMessages = store.get(messagesAtom);
 
@@ -194,6 +224,7 @@ export const useAgentChat = (
         latestMessages.filter((message) => message.id !== messageId),
       );
 
+      store.set(isAwaitingFirstChunkAtom, false);
       store.set(
         errorAtom,
         CombinedGraphQLErrors.is(error) || error instanceof Error
@@ -204,24 +235,18 @@ export const useAgentChat = (
       dispatchBrowserEvent(AGENT_CHAT_RESTORE_EDITOR_CONTENT_EVENT_NAME, {
         content: contentToSend,
       });
-
-      if (draftKey === AGENT_CHAT_NEW_THREAD_DRAFT_KEY) {
-        setCurrentAiChatThread(threadId);
-      }
-
-      setPendingThreadIdAfterFirstSend(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     store,
-    agentChatSelectedFiles,
     ensureThreadIdForSend,
     setAgentChatInput,
     getBrowsingContext,
-    agentChatUploadedFiles,
     setAgentChatUploadedFiles,
     setAgentChatDraftsByThreadId,
     modelIdForRequest,
+    enabledModels,
+    enqueueErrorSnackBar,
     setCurrentAiChatThread,
     apolloClient,
     applyOptimisticUnarchive,
@@ -238,6 +263,14 @@ export const useAgentChat = (
     if (!isDefined(threadId) || !isValidUuid(threadId)) {
       return;
     }
+
+    store.set(
+      agentChatIsAwaitingFirstChunkComponentFamilyState.atomFamily({
+        instanceId: AGENT_CHAT_INSTANCE_ID,
+        familyKey: { threadId },
+      }),
+      false,
+    );
 
     try {
       await apolloClient.mutate({

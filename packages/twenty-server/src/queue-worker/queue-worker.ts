@@ -20,6 +20,8 @@ async function bootstrap() {
 
     // Inject our logger
     app.useLogger(loggerService ?? false);
+
+    app.enableShutdownHooks();
   } catch (err) {
     loggerService?.error(err?.message, err?.name);
 
@@ -30,4 +32,4 @@ async function bootstrap() {
     throw err;
   }
 }
-bootstrap();
+void bootstrap();

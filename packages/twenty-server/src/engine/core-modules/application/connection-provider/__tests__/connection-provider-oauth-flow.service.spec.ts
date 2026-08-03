@@ -13,15 +13,24 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
 import { ConnectedAccountProvider } from 'twenty-shared/types';
+import { isDefined } from 'twenty-shared/utils';
 
 import { type ConnectionProviderEntity } from 'src/engine/core-modules/application/connection-provider/connection-provider.entity';
 import { ConnectionProviderOAuthFlowService } from 'src/engine/core-modules/application/connection-provider/connection-provider-oauth-flow.service';
 import { ConnectionProviderService } from 'src/engine/core-modules/application/connection-provider/connection-provider.service';
-import { JwtTokenTypeEnum } from 'src/engine/core-modules/auth/types/auth-context.type';
+import { JwtTokenTypeEnum } from 'src/engine/core-modules/auth/types/jwt-token-type.enum';
+import { ExceptionHandlerService } from 'src/engine/core-modules/exception-handler/exception-handler.service';
 import { JwtWrapperService } from 'src/engine/core-modules/jwt/services/jwt-wrapper.service';
 import { SecureHttpClientService } from 'src/engine/core-modules/secure-http-client/secure-http-client.service';
 import { TwentyConfigService } from 'src/engine/core-modules/twenty-config/twenty-config.service';
+import { MessageQueue } from 'src/engine/core-modules/message-queue/message-queue.constants';
+import { getQueueToken } from 'src/engine/core-modules/message-queue/utils/get-queue-token.util';
+import { SECRET_ENCRYPTION_ENVELOPE_V2_PREFIX } from 'src/engine/core-modules/secret-encryption/constants/secret-encryption.constant';
 import { ConnectedAccountEntity } from 'src/engine/metadata-modules/connected-account/entities/connected-account.entity';
+import { ConnectedAccountTokenEncryptionService } from 'src/engine/metadata-modules/connected-account/services/connected-account-token-encryption.service';
+import { WorkspaceCacheService } from 'src/engine/workspace-cache/services/workspace-cache.service';
+
+const FAKE_CIPHER_PREFIX = `${SECRET_ENCRYPTION_ENVELOPE_V2_PREFIX}keyid:`;
 
 describe('ConnectionProviderOAuthFlowService', () => {
   let service: ConnectionProviderOAuthFlowService;
@@ -30,9 +39,8 @@ describe('ConnectionProviderOAuthFlowService', () => {
     getClientCredentials: jest.Mock;
   };
   let jwtWrapperService: {
-    sign: jest.Mock;
+    signAsyncOrThrow: jest.Mock;
     verifyJwtToken: jest.Mock;
-    generateAppSecret: jest.Mock;
   };
   let secureHttpClientService: { createSsrfSafeFetch: jest.Mock };
   let connectedAccountRepository: {
@@ -43,6 +51,9 @@ describe('ConnectionProviderOAuthFlowService', () => {
     findOne: jest.Mock;
     findOneByOrFail: jest.Mock;
   };
+  let workspaceCacheService: { getOrRecompute: jest.Mock };
+  let messageQueueService: { add: jest.Mock };
+  let exceptionHandlerService: { captureExceptions: jest.Mock };
 
   const baseProvider: ConnectionProviderEntity = {
     id: 'provider-1',
@@ -76,9 +87,8 @@ describe('ConnectionProviderOAuthFlowService', () => {
       })),
     };
     jwtWrapperService = {
-      sign: jest.fn(),
+      signAsyncOrThrow: jest.fn(),
       verifyJwtToken: jest.fn(),
-      generateAppSecret: jest.fn(() => 'derived-secret'),
     };
     secureHttpClientService = { createSsrfSafeFetch: jest.fn() };
     connectedAccountRepository = {
@@ -92,6 +102,13 @@ describe('ConnectionProviderOAuthFlowService', () => {
         provider: ConnectedAccountProvider.APP,
       })),
     };
+    workspaceCacheService = {
+      getOrRecompute: jest.fn(async () => ({
+        flatLogicFunctionMaps: { byUniversalIdentifier: {} },
+      })),
+    };
+    messageQueueService = { add: jest.fn() };
+    exceptionHandlerService = { captureExceptions: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -110,6 +127,41 @@ describe('ConnectionProviderOAuthFlowService', () => {
           provide: getRepositoryToken(ConnectedAccountEntity),
           useValue: connectedAccountRepository,
         },
+        {
+          provide: WorkspaceCacheService,
+          useValue: workspaceCacheService,
+        },
+        {
+          provide: getQueueToken(MessageQueue.logicFunctionQueue),
+          useValue: messageQueueService,
+        },
+        {
+          provide: ExceptionHandlerService,
+          useValue: exceptionHandlerService,
+        },
+        {
+          // Real prefix/round-trip behavior is asserted in
+          // connected-account-token-encryption.service.spec.ts; here we use a
+          // CIPHER(...) wrapper so assertions can match exact ciphertext.
+          provide: ConnectedAccountTokenEncryptionService,
+          useValue: {
+            encryptTokenPair: jest.fn(
+              ({
+                accessToken,
+                refreshToken,
+              }: {
+                accessToken: string;
+                refreshToken: string | null;
+                workspaceId: string;
+              }) => ({
+                encryptedAccessToken: `${FAKE_CIPHER_PREFIX}CIPHER(${accessToken})`,
+                encryptedRefreshToken: isDefined(refreshToken)
+                  ? `${FAKE_CIPHER_PREFIX}CIPHER(${refreshToken})`
+                  : null,
+              }),
+            ),
+          },
+        },
       ],
     }).compile();
 
@@ -120,7 +172,9 @@ describe('ConnectionProviderOAuthFlowService', () => {
 
   describe('startAuthorizationFlow', () => {
     it('builds the provider authorization URL with the workspace + visibility context signed into state', async () => {
-      jwtWrapperService.sign.mockReturnValue('signed-state-token');
+      jwtWrapperService.signAsyncOrThrow.mockResolvedValue(
+        'signed-state-token',
+      );
 
       const { authorizationUrl } = await service.startAuthorizationFlow({
         connectionProvider: baseProvider,
@@ -144,12 +198,12 @@ describe('ConnectionProviderOAuthFlowService', () => {
       expect(url.searchParams.get('scope')).toBe('read write');
       expect(url.searchParams.get('state')).toBe('signed-state-token');
       expect(url.searchParams.get('redirect_uri')).toBe(
-        'https://api.example.com/apps/oauth/callback',
+        'https://api.example.com/auth/apps/callback',
       );
       expect(url.searchParams.has('code_challenge')).toBe(false);
 
       // signed payload carries workspace identity for the callback to use
-      expect(jwtWrapperService.sign).toHaveBeenCalledWith(
+      expect(jwtWrapperService.signAsyncOrThrow).toHaveBeenCalledWith(
         expect.objectContaining({
           type: JwtTokenTypeEnum.APP_OAUTH_STATE,
           workspaceId: 'workspace-1',
@@ -157,12 +211,12 @@ describe('ConnectionProviderOAuthFlowService', () => {
           visibility: 'user',
           reconnectingConnectedAccountId: null,
         }),
-        expect.objectContaining({ secret: 'derived-secret' }),
+        expect.objectContaining({ expiresIn: expect.any(String) }),
       );
     });
 
     it('emits PKCE challenge params when usePkce is enabled', async () => {
-      jwtWrapperService.sign.mockReturnValue('signed-state');
+      jwtWrapperService.signAsyncOrThrow.mockResolvedValue('signed-state');
 
       const { authorizationUrl } = await service.startAuthorizationFlow({
         connectionProvider: {
@@ -220,7 +274,7 @@ describe('ConnectionProviderOAuthFlowService', () => {
           },
         });
         // No state JWT signed, no upstream URL built.
-        expect(jwtWrapperService.sign).not.toHaveBeenCalled();
+        expect(jwtWrapperService.signAsyncOrThrow).not.toHaveBeenCalled();
       });
 
       it('throws FORBIDDEN when reconnecting an id that belongs to a different provider in the same workspace', async () => {
@@ -242,7 +296,7 @@ describe('ConnectionProviderOAuthFlowService', () => {
           workspaceId: 'workspace-1',
           connectionProviderId: 'provider-1',
         });
-        jwtWrapperService.sign.mockReturnValue('state');
+        jwtWrapperService.signAsyncOrThrow.mockResolvedValue('state');
 
         const { authorizationUrl } = await service.startAuthorizationFlow({
           ...validateArgs,
@@ -252,11 +306,11 @@ describe('ConnectionProviderOAuthFlowService', () => {
         expect(new URL(authorizationUrl).searchParams.get('state')).toBe(
           'state',
         );
-        expect(jwtWrapperService.sign).toHaveBeenCalled();
+        expect(jwtWrapperService.signAsyncOrThrow).toHaveBeenCalled();
       });
 
       it('skips the lookup entirely when reconnectingConnectedAccountId is null', async () => {
-        jwtWrapperService.sign.mockReturnValue('state');
+        jwtWrapperService.signAsyncOrThrow.mockResolvedValue('state');
 
         await service.startAuthorizationFlow({
           ...validateArgs,
@@ -294,7 +348,7 @@ describe('ConnectionProviderOAuthFlowService', () => {
     };
 
     beforeEach(() => {
-      jwtWrapperService.verifyJwtToken.mockReturnValue(stateClaims);
+      jwtWrapperService.verifyJwtToken.mockResolvedValue(stateClaims);
       connectionProviderService.findOneByIdOrThrow.mockResolvedValue(
         baseProvider,
       );
@@ -313,11 +367,12 @@ describe('ConnectionProviderOAuthFlowService', () => {
       expect(result.workspaceId).toBe('workspace-1');
       expect(result.applicationId).toBe('app-1');
 
+      // Encrypt-at-receipt: the entity must never hold the IDP plaintext.
       expect(connectedAccountRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({
           provider: ConnectedAccountProvider.APP,
-          accessToken: 'new_access',
-          refreshToken: 'new_refresh',
+          accessToken: `${FAKE_CIPHER_PREFIX}CIPHER(new_access)`,
+          refreshToken: `${FAKE_CIPHER_PREFIX}CIPHER(new_refresh)`,
           connectionProviderId: 'provider-1',
           applicationId: 'app-1',
           workspaceId: 'workspace-1',
@@ -330,7 +385,7 @@ describe('ConnectionProviderOAuthFlowService', () => {
     });
 
     it('updates the existing ConnectedAccount when reconnectingConnectedAccountId is supplied', async () => {
-      jwtWrapperService.verifyJwtToken.mockReturnValue({
+      jwtWrapperService.verifyJwtToken.mockResolvedValue({
         ...stateClaims,
         reconnectingConnectedAccountId: 'existing-account-id',
       });
@@ -344,8 +399,8 @@ describe('ConnectionProviderOAuthFlowService', () => {
       expect(connectedAccountRepository.update).toHaveBeenCalledWith(
         { id: 'existing-account-id', workspaceId: 'workspace-1' },
         expect.objectContaining({
-          accessToken: 'new_access',
-          refreshToken: 'new_refresh',
+          accessToken: `${FAKE_CIPHER_PREFIX}CIPHER(new_access)`,
+          refreshToken: `${FAKE_CIPHER_PREFIX}CIPHER(new_refresh)`,
           authFailedAt: null,
           visibility: 'user',
         }),
@@ -361,7 +416,7 @@ describe('ConnectionProviderOAuthFlowService', () => {
     });
 
     it('updates visibility on an existing ConnectedAccount when reconnecting', async () => {
-      jwtWrapperService.verifyJwtToken.mockReturnValue({
+      jwtWrapperService.verifyJwtToken.mockResolvedValue({
         ...stateClaims,
         visibility: 'workspace',
         reconnectingConnectedAccountId: 'existing-account-id',
@@ -381,7 +436,7 @@ describe('ConnectionProviderOAuthFlowService', () => {
     });
 
     it('persists the workspace visibility when state asks for it', async () => {
-      jwtWrapperService.verifyJwtToken.mockReturnValue({
+      jwtWrapperService.verifyJwtToken.mockResolvedValue({
         ...stateClaims,
         visibility: 'workspace',
       });
@@ -397,9 +452,9 @@ describe('ConnectionProviderOAuthFlowService', () => {
     });
 
     it('rejects an invalid state', async () => {
-      jwtWrapperService.verifyJwtToken.mockImplementation(() => {
-        throw new Error('JWT expired');
-      });
+      jwtWrapperService.verifyJwtToken.mockRejectedValue(
+        new Error('JWT expired'),
+      );
 
       await expect(
         service.completeAuthorizationFlow({
@@ -407,6 +462,106 @@ describe('ConnectionProviderOAuthFlowService', () => {
           state: 'bad-state',
         }),
       ).rejects.toThrow(/state/);
+    });
+
+    describe('on-connect hook', () => {
+      const ON_CONNECT_UID = 'c1c1c1c1-c1c1-4c1c-c1c1-c1c1c1c1c1c1';
+
+      it('does not dispatch a hook when the provider declares none', async () => {
+        await service.completeAuthorizationFlow({
+          code: 'auth_code',
+          state: 'signed-state',
+        });
+
+        expect(workspaceCacheService.getOrRecompute).not.toHaveBeenCalled();
+        expect(messageQueueService.add).not.toHaveBeenCalled();
+      });
+
+      it('enqueues the declared on-connect logic function in the connecting workspace', async () => {
+        connectionProviderService.findOneByIdOrThrow.mockResolvedValue({
+          ...baseProvider,
+          onConnectLogicFunctionUniversalIdentifier: ON_CONNECT_UID,
+        });
+        workspaceCacheService.getOrRecompute.mockResolvedValue({
+          flatLogicFunctionMaps: {
+            byUniversalIdentifier: {
+              [ON_CONNECT_UID]: { id: 'logic-function-1' },
+            },
+          },
+        });
+
+        const result = await service.completeAuthorizationFlow({
+          code: 'auth_code',
+          state: 'signed-state',
+        });
+
+        expect(workspaceCacheService.getOrRecompute).toHaveBeenCalledWith(
+          'workspace-1',
+          ['flatLogicFunctionMaps'],
+        );
+        expect(messageQueueService.add).toHaveBeenCalledWith(
+          'LogicFunctionTriggerJob',
+          {
+            logicFunctionId: 'logic-function-1',
+            workspaceId: 'workspace-1',
+            payload: {
+              connectionProviderId: 'provider-1',
+              connectionProviderName: 'linear',
+              connectedAccountId: result.connectedAccountId,
+            },
+          },
+          { retryLimit: 3 },
+        );
+      });
+
+      it('reports to Sentry without failing the connection when the hook function is missing', async () => {
+        connectionProviderService.findOneByIdOrThrow.mockResolvedValue({
+          ...baseProvider,
+          onConnectLogicFunctionUniversalIdentifier: ON_CONNECT_UID,
+        });
+        workspaceCacheService.getOrRecompute.mockResolvedValue({
+          flatLogicFunctionMaps: { byUniversalIdentifier: {} },
+        });
+
+        const result = await service.completeAuthorizationFlow({
+          code: 'auth_code',
+          state: 'signed-state',
+        });
+
+        expect(result.connectedAccountId).toBe('new-account-id');
+        expect(messageQueueService.add).not.toHaveBeenCalled();
+        expect(exceptionHandlerService.captureExceptions).toHaveBeenCalledTimes(
+          1,
+        );
+      });
+
+      it('treats a soft-deleted hook function as missing instead of enqueuing it', async () => {
+        connectionProviderService.findOneByIdOrThrow.mockResolvedValue({
+          ...baseProvider,
+          onConnectLogicFunctionUniversalIdentifier: ON_CONNECT_UID,
+        });
+        workspaceCacheService.getOrRecompute.mockResolvedValue({
+          flatLogicFunctionMaps: {
+            byUniversalIdentifier: {
+              [ON_CONNECT_UID]: {
+                id: 'logic-function-1',
+                deletedAt: new Date().toISOString(),
+              },
+            },
+          },
+        });
+
+        const result = await service.completeAuthorizationFlow({
+          code: 'auth_code',
+          state: 'signed-state',
+        });
+
+        expect(result.connectedAccountId).toBe('new-account-id');
+        expect(messageQueueService.add).not.toHaveBeenCalled();
+        expect(exceptionHandlerService.captureExceptions).toHaveBeenCalledTimes(
+          1,
+        );
+      });
     });
   });
 });

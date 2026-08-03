@@ -1,3 +1,4 @@
+import { OpenRecordIn } from 'twenty-shared/types';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
@@ -11,7 +12,7 @@ import { LoginTokenService } from 'src/engine/core-modules/auth/token/services/l
 import { type AuthContextUser } from 'src/engine/core-modules/auth/types/auth-context.type';
 import { WorkspaceDomainsService } from 'src/engine/core-modules/domain/workspace-domains/services/workspace-domains.service';
 import { FeatureFlagService } from 'src/engine/core-modules/feature-flag/services/feature-flag.service';
-import { FileStorageService } from 'src/engine/core-modules/file-storage/file-storage.service';
+import { FileStorageService } from 'src/engine/core-modules/file-storage/services/file-storage.service';
 import { FileCorePictureService } from 'src/engine/core-modules/file/file-core-picture/services/file-core-picture.service';
 import { FileUrlService } from 'src/engine/core-modules/file/file-url/file-url.service';
 import { OnboardingService } from 'src/engine/core-modules/onboarding/onboarding.service';
@@ -19,6 +20,7 @@ import { UserWorkspaceEntity } from 'src/engine/core-modules/user-workspace/user
 import { UserWorkspaceService } from 'src/engine/core-modules/user-workspace/user-workspace.service';
 import { UserEntity } from 'src/engine/core-modules/user/user.entity';
 import { WorkspaceInvitationService } from 'src/engine/core-modules/workspace-invitation/services/workspace-invitation.service';
+import { WorkspaceDiscoverability } from 'src/engine/core-modules/workspace/types/workspace-discoverability.type';
 import { type WorkspaceEntity } from 'src/engine/core-modules/workspace/workspace.entity';
 import { ObjectMetadataEntity } from 'src/engine/metadata-modules/object-metadata/object-metadata.entity';
 import { PermissionsException } from 'src/engine/metadata-modules/permissions/permissions.exception';
@@ -52,6 +54,10 @@ describe('UserWorkspaceService', () => {
             exists: jest.fn(),
             findOne: jest.fn(),
             findOneOrFail: jest.fn(),
+            manager: {
+              connection: { driver: { options: { type: 'postgres' } } },
+            },
+            metadata: { columns: [] },
           },
         },
         {
@@ -271,7 +277,10 @@ describe('UserWorkspaceService', () => {
       ];
       const workspaceMemberRepository = {
         insert: jest.fn(),
-        find: jest.fn().mockResolvedValue(workspaceMember),
+        find: jest
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValue(workspaceMember),
       };
 
       jest
@@ -294,11 +303,37 @@ describe('UserWorkspaceService', () => {
           lastName: user.lastName,
         },
         colorScheme: 'System',
+        openRecordIn: OpenRecordIn.SIDE_PANEL,
         userId: user.id,
         userEmail: user.email,
         locale: 'en',
         avatarUrl: 'userWorkspace-avatar-url',
       });
+    });
+
+    it('should not create a workspace member when one already exists', async () => {
+      const workspaceId = 'workspace-id';
+      const user = {
+        id: 'user-id',
+        email: 'test@example.com',
+        firstName: 'John',
+        lastName: 'Doe',
+        locale: 'en',
+      } as unknown as AuthContextUser;
+      const workspaceMemberRepository = {
+        insert: jest.fn(),
+        find: jest
+          .fn()
+          .mockResolvedValue([{ id: 'existing-member-id', userId: 'user-id' }]),
+      };
+
+      jest
+        .spyOn(globalWorkspaceOrmManager, 'getRepository')
+        .mockResolvedValue(workspaceMemberRepository as any);
+
+      await service.createWorkspaceMember(workspaceId, user);
+
+      expect(workspaceMemberRepository.insert).not.toHaveBeenCalled();
     });
   });
 
@@ -423,6 +458,40 @@ describe('UserWorkspaceService', () => {
       await expect(
         service.addUserToWorkspaceIfUserNotInWorkspace(user, workspace),
       ).rejects.toThrow(PermissionsException);
+    });
+  });
+
+  describe('isWorkspaceCreator', () => {
+    it('should treat the earliest membership as the creator, including soft-deleted ones', async () => {
+      jest.spyOn(userWorkspaceRepository, 'findOne').mockResolvedValue({
+        userId: 'creator-user-id',
+      } as UserWorkspaceEntity);
+
+      await expect(
+        service.isWorkspaceCreator({
+          userId: 'creator-user-id',
+          workspaceId: 'workspace-id',
+        }),
+      ).resolves.toBe(true);
+
+      expect(userWorkspaceRepository.findOne).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-id' },
+        order: { createdAt: 'ASC' },
+        withDeleted: true,
+      });
+    });
+
+    it('should return false for a later member', async () => {
+      jest.spyOn(userWorkspaceRepository, 'findOne').mockResolvedValue({
+        userId: 'creator-user-id',
+      } as UserWorkspaceEntity);
+
+      await expect(
+        service.isWorkspaceCreator({
+          userId: 'second-user-id',
+          workspaceId: 'workspace-id',
+        }),
+      ).resolves.toBe(false);
     });
   });
 
@@ -622,6 +691,7 @@ describe('UserWorkspaceService', () => {
         displayName: 'Workspace 2',
         logo: 'logo2.png',
         workspaceSSOIdentityProviders: [],
+        workspaceDiscoverability: WorkspaceDiscoverability.PUBLIC,
       } as unknown as WorkspaceEntity;
 
       const user = {
@@ -682,6 +752,7 @@ describe('UserWorkspaceService', () => {
         displayName: 'Workspace 1',
         logo: 'logo1.png',
         workspaceSSOIdentityProviders: [],
+        workspaceDiscoverability: WorkspaceDiscoverability.PUBLIC,
       } as unknown as WorkspaceEntity;
 
       jest.spyOn(userRepository, 'findOne').mockResolvedValue(null);

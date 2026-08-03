@@ -70,6 +70,13 @@ export class OAuthService {
 
     const applicationRegistration = clientValidation;
 
+    if (applicationRegistration.oAuthClientSecretHash && !clientSecret) {
+      return this.errorResponse(
+        'invalid_client',
+        'Client authentication required for confidential clients',
+      );
+    }
+
     if (clientSecret) {
       const secretError = await this.validateClientSecret(
         applicationRegistration,
@@ -334,7 +341,7 @@ export class OAuthService {
 
     try {
       const payload =
-        this.applicationTokenService.validateApplicationRefreshToken(
+        await this.applicationTokenService.validateApplicationRefreshToken(
           refreshToken,
         );
 
@@ -409,7 +416,9 @@ export class OAuthService {
     // We validate the token to log that revocation was requested.
     try {
       const payload =
-        this.applicationTokenService.validateApplicationRefreshToken(token);
+        await this.applicationTokenService.validateApplicationRefreshToken(
+          token,
+        );
 
       this.logger.log(
         `Token revocation requested for application ${payload.applicationId}`,
@@ -448,7 +457,7 @@ export class OAuthService {
     }
 
     try {
-      this.applicationTokenService.validateApplicationRefreshToken(token);
+      await this.applicationTokenService.validateApplicationRefreshToken(token);
 
       const decoded = this.applicationTokenService.decodeToken(token);
 
@@ -483,7 +492,9 @@ export class OAuthService {
       // Try as access token (with signature verification)
       try {
         const payload =
-          this.applicationTokenService.validateApplicationAccessToken(token);
+          await this.applicationTokenService.validateApplicationAccessToken(
+            token,
+          );
 
         const application = await this.applicationRepository.findOne({
           where: { id: payload.applicationId },

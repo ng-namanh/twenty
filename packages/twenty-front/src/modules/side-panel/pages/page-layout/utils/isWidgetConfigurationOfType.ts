@@ -9,9 +9,10 @@ import {
   type FieldsConfiguration,
   type FilesConfiguration,
   type FrontComponentConfiguration,
-  type GaugeChartConfiguration,
   type IframeConfiguration,
   type LineChartConfiguration,
+  type MessageCampaignBodyConfiguration,
+  type MessageCampaignDetailsConfiguration,
   type NotesConfiguration,
   type PieChartConfiguration,
   type RecordTableConfiguration,
@@ -51,6 +52,18 @@ type WidgetConfigurationTypenameMap = {
   > & {
     configurationType: WidgetConfigurationType.EMAIL_THREAD;
   };
+  MessageCampaignBodyConfiguration: Omit<
+    MessageCampaignBodyConfiguration,
+    'configurationType'
+  > & {
+    configurationType: WidgetConfigurationType.MESSAGE_CAMPAIGN_BODY;
+  };
+  MessageCampaignDetailsConfiguration: Omit<
+    MessageCampaignDetailsConfiguration,
+    'configurationType'
+  > & {
+    configurationType: WidgetConfigurationType.MESSAGE_CAMPAIGN_DETAILS;
+  };
   EmailsConfiguration: Omit<EmailsConfiguration, 'configurationType'> & {
     configurationType: WidgetConfigurationType.EMAILS;
   };
@@ -68,12 +81,6 @@ type WidgetConfigurationTypenameMap = {
   };
   FilesConfiguration: Omit<FilesConfiguration, 'configurationType'> & {
     configurationType: WidgetConfigurationType.FILES;
-  };
-  GaugeChartConfiguration: Omit<
-    GaugeChartConfiguration,
-    'configurationType'
-  > & {
-    configurationType: WidgetConfigurationType.GAUGE_CHART;
   };
   IframeConfiguration: Omit<IframeConfiguration, 'configurationType'> & {
     configurationType: WidgetConfigurationType.IFRAME;

@@ -3,15 +3,20 @@ import { Suspense, lazy } from 'react';
 
 import { isDefined } from 'twenty-shared/utils';
 
+import { FrontComponentSkeletonLoader } from '@/front-components/components/FrontComponentSkeletonLoader';
+import { usePageLayoutContentContext } from '@/page-layout/contexts/PageLayoutContentContext';
 import { useIsPageLayoutInEditMode } from '@/page-layout/hooks/useIsPageLayoutInEditMode';
 import { type PageLayoutWidget } from '@/page-layout/types/PageLayoutWidget';
 import { PageLayoutWidgetNoDataDisplay } from '@/page-layout/widgets/components/PageLayoutWidgetNoDataDisplay';
 import { isWidgetConfigurationOfType } from '@/side-panel/pages/page-layout/utils/isWidgetConfigurationOfType';
 import { useLayoutRenderingContext } from '@/ui/layout/contexts/LayoutRenderingContext';
 
-const StyledContainer = styled.div<{ isInEditMode: boolean }>`
+const StyledContainer = styled.div<{
+  isSoloLayout: boolean;
+  isInEditMode: boolean;
+}>`
   height: 100%;
-  overflow: auto;
+  overflow: ${({ isSoloLayout }) => (isSoloLayout ? 'visible' : 'auto')};
   pointer-events: ${({ isInEditMode }) => (isInEditMode ? 'none' : 'auto')};
   width: 100%;
 `;
@@ -30,6 +35,7 @@ export const FrontComponentWidgetRenderer = ({
   widget,
 }: FrontComponentWidgetRendererProps) => {
   const isPageLayoutInEditMode = useIsPageLayoutInEditMode();
+  const { presentation } = usePageLayoutContentContext();
   const { targetRecordIdentifier } = useLayoutRenderingContext();
 
   const configuration = widget.configuration;
@@ -47,11 +53,15 @@ export const FrontComponentWidgetRenderer = ({
     : undefined;
 
   return (
-    <StyledContainer isInEditMode={isPageLayoutInEditMode}>
-      <Suspense fallback={null}>
+    <StyledContainer
+      isSoloLayout={presentation === 'solo'}
+      isInEditMode={isPageLayoutInEditMode}
+    >
+      <Suspense fallback={<FrontComponentSkeletonLoader />}>
         <FrontComponentRenderer
           frontComponentId={frontComponentId}
           selectedRecordIds={selectedRecordIds}
+          loadingFallback={<FrontComponentSkeletonLoader />}
         />
       </Suspense>
     </StyledContainer>

@@ -4,10 +4,13 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: var(--t-background-tertiary);
+  color: var(--t-font-color-primary);
+  touch-action: manipulation;
 }
 
 html {
   font-size: 13px;
+  background: var(--t-background-tertiary);
 }
 
 button {

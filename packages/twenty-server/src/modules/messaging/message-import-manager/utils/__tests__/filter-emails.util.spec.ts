@@ -37,6 +37,27 @@ describe('filterEmails', () => {
     expect(filteredMessages).toEqual([]);
   });
 
+  it('Should keep same-domain emails when isInternalMessagesImportEnabled is true', () => {
+    // Workspace opted into syncing internal emails (e.g. university or
+    // shared-domain institution). Same-domain participants must not be
+    // dropped — the toggle bypasses filterOutInternals.
+    const primaryHandle = 'guillim@acme.com';
+    const messages = messagingGetMessagesServiceGetMessages.filter(
+      (message) => message.externalId === 'AA-work-emails-internal',
+    );
+
+    const filteredMessages = filterEmails(
+      primaryHandle,
+      [],
+      messages,
+      [],
+      true,
+      true,
+    );
+
+    expect(filteredMessages).toEqual(messages);
+  });
+
   it('Should filter messages with participant from the blocklist', () => {
     const primaryHandle = 'guillim@acme.com';
     const messages = messagingGetMessagesServiceGetMessages.filter(
@@ -72,6 +93,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
       {
         externalId: 'support-message',
@@ -89,6 +111,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
       {
         externalId: 'regular-message',
@@ -106,6 +129,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
     ];
 
@@ -113,6 +137,38 @@ describe('filterEmails', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].externalId).toBe('regular-message');
+  });
+
+  it('should filter out bulk mail whose sender does not look like a group address', () => {
+    const primaryHandle = 'user@example.com';
+    const messages: MessageWithParticipants[] = [
+      {
+        externalId: 'newsletter-message',
+        subject: 'Your weekly recap',
+        receivedAt: new Date('2025-01-09T09:54:37.000Z'),
+        text: 'Recap',
+        headerMessageId: '<posts-recap@mail.instagram.com>',
+        messageThreadExternalId: 'thread-1',
+        direction: MessageDirection.INCOMING,
+        participants: [
+          {
+            role: MessageParticipantRole.FROM,
+            handle: 'posts-recap@mail.instagram.com',
+            displayName: 'Instagram',
+          },
+        ],
+        attachments: [],
+        isDraft: false,
+        messageHeaders: [
+          { name: 'List-Unsubscribe', value: '<https://instagram.com/unsub>' },
+        ],
+      },
+    ];
+
+    expect(filterEmails(primaryHandle, [], messages, [])).toEqual([]);
+    expect(filterEmails(primaryHandle, [], messages, [], false)).toEqual(
+      messages,
+    );
   });
 
   it('should not filter out group emails when excludeGroupEmails is false', () => {
@@ -134,6 +190,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
     ];
 
@@ -155,6 +212,7 @@ describe('filterEmails', () => {
         direction: MessageDirection.INCOMING,
         participants: undefined as any,
         attachments: [],
+        isDraft: false,
       },
     ];
 
@@ -182,6 +240,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
     ];
 
@@ -215,6 +274,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
       {
         externalId: 'alias-sent-message',
@@ -237,6 +297,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
       {
         externalId: 'reply-from-john',
@@ -259,6 +320,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
       {
         externalId: 'incoming-from-noreply',
@@ -281,6 +343,7 @@ describe('filterEmails', () => {
           },
         ],
         attachments: [],
+        isDraft: false,
       },
     ];
 

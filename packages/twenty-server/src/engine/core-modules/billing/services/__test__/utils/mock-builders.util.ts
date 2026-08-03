@@ -7,12 +7,13 @@ import { type BillingSubscriptionEntity } from 'src/engine/core-modules/billing/
 import { type BillingPlanKey } from 'src/engine/core-modules/billing/enums/billing-plan-key.enum';
 import { BillingProductKey } from 'src/engine/core-modules/billing/enums/billing-product-key.enum';
 import { type SubscriptionInterval } from 'src/engine/core-modules/billing/enums/billing-subscription-interval.enum';
+import { type SubscriptionStatus } from 'src/engine/core-modules/billing/enums/billing-subscription-status.enum';
 import { BillingUsageType } from 'src/engine/core-modules/billing/enums/billing-usage-type.enum';
 import { type BillingProductService } from 'src/engine/core-modules/billing/services/billing-product.service';
 import { type BillingSubscriptionPhaseService } from 'src/engine/core-modules/billing/services/billing-subscription-phase.service';
 import { type StripeSubscriptionScheduleService } from 'src/engine/core-modules/billing/stripe/services/stripe-subscription-schedule.service';
 import { type BillingMeterPrice } from 'src/engine/core-modules/billing/types/billing-meter-price.type';
-
+import { type WorkspaceScopedRepository } from 'src/engine/twenty-orm/workspace-scoped-repository/workspace-scoped-repository';
 import { buildSubscription } from './build-subscription.util';
 
 export const repoMock = <T extends ObjectLiteral>() =>
@@ -45,16 +46,17 @@ export const buildBillingPriceEntity = ({
       metadata: {
         planKey,
         productKey: isMetered
-          ? BillingProductKey.WORKFLOW_NODE_EXECUTION
+          ? BillingProductKey.RESOURCE_CREDIT
           : BillingProductKey.BASE_PRODUCT,
         priceUsageBased: isMetered
           ? BillingUsageType.METERED
           : BillingUsageType.LICENSED,
       },
     },
-    ...(isMetered && tiers
+    ...(isMetered
       ? {
-          tiers,
+          metadata: { credit_amount: '1000' },
+          ...(tiers ? { tiers } : {}),
         }
       : {}),
   }) as BillingPriceEntity | BillingMeterPrice;
@@ -80,14 +82,15 @@ export const buildDefaultMeteredTiers = (
 
 export const arrangeBillingSubscriptionRepositoryFindOneOrFail = (
   billingSubscriptionRepository: jest.Mocked<
-    Repository<BillingSubscriptionEntity>
+    WorkspaceScopedRepository<BillingSubscriptionEntity>
   >,
   params: {
     planKey?: BillingPlanKey;
     interval?: SubscriptionInterval;
     licensedPriceId?: string;
-    meteredPriceId?: string;
+    resourceCreditPriceId?: string;
     seats?: number;
+    status?: SubscriptionStatus;
     workspaceId?: string;
     stripeSubscriptionId?: string;
     currentPeriodEnd?: Date;
@@ -195,13 +198,13 @@ export const arrangeBillingSubscriptionPhaseServiceToPhaseUpdateParams = (
 
 export const buildSchedulePhase = ({
   licensedPriceId,
-  meteredPriceId,
+  resourceCreditPriceId,
   seats = 1,
   startDate = Math.floor(Date.now() / 1000),
   endDate = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
 }: {
   licensedPriceId: string;
-  meteredPriceId: string;
+  resourceCreditPriceId: string;
   seats?: number;
   startDate?: number;
   endDate?: number;
@@ -211,6 +214,6 @@ export const buildSchedulePhase = ({
     end_date: endDate,
     items: [
       { price: licensedPriceId, quantity: seats },
-      { price: meteredPriceId },
+      { price: resourceCreditPriceId, quantity: 1 },
     ],
   }) as Stripe.SubscriptionSchedule.Phase;
