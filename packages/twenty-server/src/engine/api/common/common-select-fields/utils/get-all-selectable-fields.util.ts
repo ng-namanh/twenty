@@ -13,7 +13,7 @@ import { computeMorphOrRelationFieldJoinColumnName } from 'src/engine/metadata-m
 import { isCompositeFieldMetadataType } from 'src/engine/metadata-modules/field-metadata/utils/is-composite-field-metadata-type.util';
 import { type FlatEntityMaps } from 'src/engine/metadata-modules/flat-entity/types/flat-entity-maps.type';
 import { findFlatEntityByIdInFlatEntityMapsOrThrow } from 'src/engine/metadata-modules/flat-entity/utils/find-flat-entity-by-id-in-flat-entity-maps-or-throw.util';
-import { type FlatFieldMetadata } from 'src/engine/metadata-modules/flat-field-metadata/types/flat-field-metadata.type';
+import { type OrmFlatFieldMetadata } from 'src/engine/metadata-modules/flat-field-metadata/types/orm-flat-field-metadata.type';
 import { isFlatFieldMetadataOfType } from 'src/engine/metadata-modules/flat-field-metadata/utils/is-flat-field-metadata-of-type.util';
 import { type FlatObjectMetadata } from 'src/engine/metadata-modules/flat-object-metadata/types/flat-object-metadata.type';
 
@@ -29,8 +29,25 @@ export const getAllSelectableFields = ({
   onlyUseLabelIdentifierFieldsInRelations = false,
 }: {
   restrictedFields: RestrictedFieldsPermissions;
-  flatObjectMetadata: FlatObjectMetadata;
-  flatFieldMetadataMaps: FlatEntityMaps<FlatFieldMetadata>;
+  flatObjectMetadata: Pick<
+    FlatObjectMetadata,
+    | 'fieldIds'
+    | 'nameSingular'
+    | 'labelIdentifierFieldMetadataId'
+    | 'imageIdentifierFieldMetadataId'
+  >;
+  flatFieldMetadataMaps: FlatEntityMaps<
+    Pick<
+      OrmFlatFieldMetadata,
+      | 'id'
+      | 'universalIdentifier'
+      | 'applicationId'
+      | 'workspaceId'
+      | 'type'
+      | 'name'
+      | 'settings'
+    >
+  >;
   onlyUseLabelIdentifierFieldsInRelations?: boolean;
 }): SelectableFieldsStructured => {
   const result: SelectableFieldsStructured = {};

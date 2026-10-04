@@ -1,44 +1,52 @@
+import { WorkflowCoreSyncService } from 'src/engine/core-modules/workflow/services/workflow-core-sync.service';
 import { Injectable } from '@nestjs/common';
 
+import { FeatureFlagKey } from 'twenty-shared/types';
 import { isDefined } from 'twenty-shared/utils';
 import {
   getWorkflowRunContext,
   StepStatus,
+  WORKFLOW_ACTION_FEATURE_FLAGS,
   WorkflowRunStepInfo,
   WorkflowRunStepInfos,
+  type WorkflowRunStepLog,
 } from 'twenty-shared/workflow';
 
-import { NO_BILLING_SUBSCRIPTION } from 'src/engine/core-modules/billing/constants/no-billing-subscription.constant';
+import {
+  WorkflowStepExecutorException,
+  WorkflowStepExecutorExceptionCode,
+} from 'src/modules/workflow/workflow-executor/exceptions/workflow-step-executor.exception';
 import { BillingUsageService } from 'src/engine/core-modules/billing/services/billing-usage.service';
-import { BillingService } from 'src/engine/core-modules/billing/services/billing.service';
+import { UsageLimitQuotaService } from 'src/engine/core-modules/usage-limit/services/usage-limit-quota.service';
+import { isUsageRefusedError } from 'src/engine/core-modules/billing/utils/is-usage-refused-error.util';
 import { ExceptionHandlerService } from 'src/engine/core-modules/exception-handler/exception-handler.service';
+import { FeatureFlagService } from 'src/engine/core-modules/feature-flag/services/feature-flag.service';
 import { InjectMessageQueue } from 'src/engine/core-modules/message-queue/decorators/message-queue.decorator';
 import { MessageQueue } from 'src/engine/core-modules/message-queue/message-queue.constants';
 import { MessageQueueService } from 'src/engine/core-modules/message-queue/services/message-queue.service';
 import { MetricsService } from 'src/engine/core-modules/metrics/metrics.service';
 import { MetricsKeys } from 'src/engine/core-modules/metrics/types/metrics-keys.type';
-import { USAGE_RECORDED } from 'src/engine/core-modules/usage/constants/usage-recorded.constant';
 import { UsageOperationType } from 'src/engine/core-modules/usage/enums/usage-operation-type.enum';
 import { UsageResourceType } from 'src/engine/core-modules/usage/enums/usage-resource-type.enum';
 import { UsageUnit } from 'src/engine/core-modules/usage/enums/usage-unit.enum';
-import { type UsageEvent } from 'src/engine/core-modules/usage/types/usage-event.type';
-import { WorkspaceCacheService } from 'src/engine/workspace-cache/services/workspace-cache.service';
-import { WorkspaceEventEmitter } from 'src/engine/workspace-event-emitter/workspace-event-emitter';
+import { UsageRecorderService } from 'src/engine/core-modules/usage/services/usage-recorder.service';
+import { shouldCaptureException } from 'src/engine/utils/global-exception-handler.util';
 import { WorkflowRunStatus } from 'src/modules/workflow/common/standard-objects/workflow-run.workspace-entity';
 import { workflowHasRunningSteps } from 'src/modules/workflow/common/utils/workflow-has-running-steps.util';
-import {
-  WorkflowStepExecutorException,
-  WorkflowStepExecutorExceptionCode,
-} from 'src/modules/workflow/workflow-executor/exceptions/workflow-step-executor.exception';
 import { WorkflowActionFactory } from 'src/modules/workflow/workflow-executor/factories/workflow-action.factory';
 import { type WorkflowActionOutput } from 'src/modules/workflow/workflow-executor/types/workflow-action-output.type';
 import {
   type WorkflowBranchExecutorInput,
   type WorkflowExecutorInput,
-} from 'src/modules/workflow/workflow-executor/types/workflow-executor-input';
+} from 'src/modules/workflow/workflow-executor/types/workflow-executor-input.type';
+import { assertStepTypeAvailableToApplicationRun } from 'src/modules/workflow/workflow-executor/utils/assert-step-type-available-to-application-run.util';
+import { getStepRetryDelayMs } from 'src/modules/workflow/workflow-executor/utils/get-step-retry-delay-ms.util';
+import { isUserFacingWorkflowExecutorError } from 'src/modules/workflow/workflow-executor/utils/is-user-facing-workflow-executor-error.util';
+import { stepHasRetryAttemptsLeft } from 'src/modules/workflow/workflow-executor/utils/step-has-retry-attempts-left.util';
 import { shouldExecuteStep } from 'src/modules/workflow/workflow-executor/utils/should-execute-step.util';
 import { shouldFailSafely } from 'src/modules/workflow/workflow-executor/utils/should-fail-safely.util';
 import { shouldSkipStepExecution } from 'src/modules/workflow/workflow-executor/utils/should-skip-step-execution.util';
+import { stepShouldContinueOnFailure } from 'src/modules/workflow/workflow-executor/utils/step-should-continue-on-failure.util';
 import { workflowShouldFail } from 'src/modules/workflow/workflow-executor/utils/workflow-should-fail.util';
 import { workflowShouldKeepRunning } from 'src/modules/workflow/workflow-executor/utils/workflow-should-keep-running.util';
 import { isWorkflowIfElseAction } from 'src/modules/workflow/workflow-executor/workflow-actions/if-else/guards/is-workflow-if-else-action.guard';
@@ -54,15 +62,21 @@ import { WorkflowRunWorkspaceService } from 'src/modules/workflow/workflow-runne
 
 const MAX_EXECUTED_STEPS_COUNT = 20;
 
+type WorkflowBillingSpenders = {
+  workflowId: string;
+  applicationId: string;
+};
+
 @Injectable()
 export class WorkflowExecutorWorkspaceService {
   constructor(
+    private readonly workflowCoreSyncService: WorkflowCoreSyncService,
     private readonly workflowActionFactory: WorkflowActionFactory,
-    private readonly workspaceEventEmitter: WorkspaceEventEmitter,
+    private readonly usageRecorderService: UsageRecorderService,
     private readonly workflowRunWorkspaceService: WorkflowRunWorkspaceService,
-    private readonly billingService: BillingService,
     private readonly billingUsageService: BillingUsageService,
-    private readonly workspaceCacheService: WorkspaceCacheService,
+    private readonly usageLimitQuotaService: UsageLimitQuotaService,
+    private readonly featureFlagService: FeatureFlagService,
     private readonly exceptionHandlerService: ExceptionHandlerService,
     private readonly metricsService: MetricsService,
     @InjectMessageQueue(MessageQueue.workflowQueue)
@@ -75,6 +89,7 @@ export class WorkflowExecutorWorkspaceService {
     workspaceId,
     shouldComputeWorkflowRunStatus = true,
     executedStepsCount = 0,
+    resumedThreadId,
   }: WorkflowExecutorInput) {
     await Promise.all(
       stepIds.map(async (stepIdToExecute) => {
@@ -83,6 +98,7 @@ export class WorkflowExecutorWorkspaceService {
           workflowRunId,
           workspaceId,
           executedStepsCount,
+          resumedThreadId,
         });
       }),
     );
@@ -100,6 +116,7 @@ export class WorkflowExecutorWorkspaceService {
     workflowRunId,
     workspaceId,
     executedStepsCount,
+    resumedThreadId,
   }: WorkflowBranchExecutorInput): Promise<void> {
     const workflowRun =
       await this.workflowRunWorkspaceService.getWorkflowRunOrFail({
@@ -125,9 +142,29 @@ export class WorkflowExecutorWorkspaceService {
       return;
     }
 
+    const workflow = isDefined(workflowRun.coreWorkflowId)
+      ? await this.workflowCoreSyncService.findCoreWorkflowById(
+          workspaceId,
+          workflowRun.coreWorkflowId,
+        )
+      : null;
+
+    if (!isDefined(workflow)) {
+      throw new Error(
+        `Workflow run ${workflowRun.id} has no core workflow identity for billing`,
+      );
+    }
+
+    const billingSpenders = {
+      workflowId: workflow.workspaceWorkflowId ?? workflow.id,
+      applicationId: workflow.applicationId,
+    };
+
     let actionOutput: WorkflowActionOutput;
 
+    // A resumed step was claimed as started, which shouldExecuteStep refuses.
     if (
+      isDefined(resumedThreadId) ||
       shouldExecuteStep({
         step: stepToExecute,
         steps,
@@ -141,15 +178,44 @@ export class WorkflowExecutorWorkspaceService {
         stepInfos,
         workflowRunId,
         workspaceId,
+        billingSpenders,
+        runApplicationId: workflowRun.createdBy.context?.applicationId,
+        resumedThreadId,
+        previousStepLog: isDefined(resumedThreadId)
+          ? workflowRun.stepLogs?.[stepId]
+          : undefined,
       });
 
-      if (isDefined(actionOutput.error)) {
+      if (isDefined(actionOutput.error) && !actionOutput.isUserError) {
+        const canRetryStep = stepHasRetryAttemptsLeft({
+          step: stepToExecute,
+          stepInfo: stepInfos[stepId],
+        });
+
+        if (canRetryStep) {
+          await this.scheduleStepRetry({
+            stepId,
+            resumedThreadId,
+            error: actionOutput.error,
+            retryDelayMs: getStepRetryDelayMs({ stepInfo: stepInfos[stepId] }),
+            workflowRunId,
+            workspaceId,
+          });
+
+          return;
+        }
+      }
+
+      if (isDefined(actionOutput.error) && !actionOutput.isUsageRefused) {
         const enclosingIterator = findEnclosingIteratorWithContinueOnFailure({
           failedStepId: stepId,
           steps,
         });
 
-        if (isDefined(enclosingIterator)) {
+        if (
+          isDefined(enclosingIterator) ||
+          stepShouldContinueOnFailure(stepToExecute)
+        ) {
           actionOutput.shouldFailSafely = true;
         }
       }
@@ -180,12 +246,14 @@ export class WorkflowExecutorWorkspaceService {
     const isError =
       isDefined(actionOutput.error) && !actionOutput.shouldFailSafely;
 
+    // A resumed step's node run was charged when it first ran and paused.
     if (
       !isError &&
       !actionOutput.shouldFailSafely &&
-      !actionOutput.shouldSkipStepExecution
+      !actionOutput.shouldSkipStepExecution &&
+      !isDefined(resumedThreadId)
     ) {
-      await this.sendWorkflowNodeRunEvent(workspaceId, workflowRun.workflowId);
+      await this.sendWorkflowNodeRunEvent(workspaceId, billingSpenders);
     }
 
     const { shouldProcessNextSteps } = await this.processStepExecutionResult({
@@ -263,10 +331,7 @@ export class WorkflowExecutorWorkspaceService {
     }
 
     if (isWorkflowIfElseAction(executedStep)) {
-      return getNextStepIdsForIfElse({
-        executedStep,
-        executedStepOutput,
-      });
+      return getNextStepIdsForIfElse({ executedStep });
     }
 
     return { nextStepIdsToExecute: executedStep.nextStepIds };
@@ -323,42 +388,91 @@ export class WorkflowExecutorWorkspaceService {
     });
   }
 
-  private async sendWorkflowNodeRunEvent(
-    workspaceId: string,
-    workflowId: string,
-  ) {
-    let periodStart: Date | undefined;
-    if (this.billingService.isBillingEnabled()) {
-      const { currentBillingSubscription } =
-        await this.workspaceCacheService.getOrRecompute(workspaceId, [
-          'currentBillingSubscription',
-        ]);
+  private async assertActionTypeEnabled({
+    type,
+    workspaceId,
+  }: {
+    type: WorkflowAction['type'];
+    workspaceId: string;
+  }): Promise<void> {
+    const featureFlag = WORKFLOW_ACTION_FEATURE_FLAGS[type];
 
-      if (currentBillingSubscription !== NO_BILLING_SUBSCRIPTION) {
-        periodStart = currentBillingSubscription.currentPeriodStart;
+    if (
+      isDefined(featureFlag) &&
+      !(await this.featureFlagService.isFeatureEnabled(
+        featureFlag,
+        workspaceId,
+      ))
+    ) {
+      throw new WorkflowStepExecutorException(
+        `WorkflowActionType '${type}' is not enabled`,
+        WorkflowStepExecutorExceptionCode.INVALID_STEP_TYPE,
+      );
+    }
+  }
 
-        await this.billingUsageService.decrementAvailableCreditsInCache({
-          workspaceId,
-          usedCredits: 100,
-        });
-      }
+  private async getNodeRunRefusal({
+    workspaceId,
+    billingSpenders,
+  }: {
+    workspaceId: string;
+    billingSpenders: WorkflowBillingSpenders;
+  }): Promise<WorkflowActionOutput | undefined> {
+    const isExecutionQuotaEnabled =
+      await this.featureFlagService.isFeatureEnabled(
+        FeatureFlagKey.IS_EXECUTION_QUOTA_ENABLED,
+        workspaceId,
+      );
+
+    if (!isExecutionQuotaEnabled) {
+      return undefined;
     }
 
-    this.workspaceEventEmitter.emitCustomBatchEvent<UsageEvent>(
-      USAGE_RECORDED,
-      [
-        {
-          resourceType: UsageResourceType.WORKFLOW,
-          operationType: UsageOperationType.WORKFLOW_EXECUTION,
-          creditsUsedMicro: 100,
-          quantity: 1,
-          unit: UsageUnit.INVOCATION,
-          resourceId: workflowId,
-          periodStart,
-        },
-      ],
+    try {
+      await this.billingUsageService.assertUsageAllowed({
+        workspaceId,
+        resourceType: UsageResourceType.WORKFLOW,
+        operationType: UsageOperationType.WORKFLOW_EXECUTION,
+        spenders: billingSpenders,
+      });
+
+      return undefined;
+    } catch (error) {
+      if (!isUsageRefusedError(error)) {
+        throw error;
+      }
+
+      return {
+        error: error.message,
+        isUserError: true,
+        isUsageRefused: true,
+      };
+    }
+  }
+
+  private async sendWorkflowNodeRunEvent(
+    workspaceId: string,
+    billingSpenders: WorkflowBillingSpenders,
+  ) {
+    await this.usageLimitQuotaService.consumeQuota({
       workspaceId,
-    );
+      resourceType: UsageResourceType.WORKFLOW,
+      operationType: UsageOperationType.WORKFLOW_EXECUTION,
+      spenders: billingSpenders,
+      cost: { creditsUsedMicro: 100, quantity: 1 },
+    });
+
+    await this.usageRecorderService.record(workspaceId, [
+      {
+        resourceType: UsageResourceType.WORKFLOW,
+        operationType: UsageOperationType.WORKFLOW_EXECUTION,
+        creditsUsedMicro: 100,
+        quantity: 1,
+        unit: UsageUnit.INVOCATION,
+        resourceId: billingSpenders.workflowId,
+        spenders: billingSpenders,
+      },
+    ]);
   }
 
   private async processStepExecutionResult({
@@ -435,17 +549,21 @@ export class WorkflowExecutorWorkspaceService {
     stepInfos,
     workflowRunId,
     workspaceId,
+    billingSpenders,
+    runApplicationId,
+    resumedThreadId,
+    previousStepLog,
   }: {
     step: WorkflowAction;
     steps: WorkflowAction[];
     stepInfos: WorkflowRunStepInfos;
     workflowRunId: string;
     workspaceId: string;
+    billingSpenders: WorkflowBillingSpenders;
+    runApplicationId?: string;
+    resumedThreadId?: string;
+    previousStepLog?: WorkflowRunStepLog;
   }) {
-    // Credit-cap enforcement lives at the AI entry points (chat resolver,
-    // executeAgent, generate-text controller, title generation). Cheap
-    // workflow steps (DB CRUD, branching, actions) are not gated here so a
-    // chat-driven cap exhaustion does not block non-AI automations.
     const stepId = step.id;
 
     const workflowAction = this.workflowActionFactory.get(step.type);
@@ -461,6 +579,22 @@ export class WorkflowExecutorWorkspaceService {
     });
 
     try {
+      await this.assertActionTypeEnabled({ type: step.type, workspaceId });
+
+      assertStepTypeAvailableToApplicationRun({
+        stepType: step.type,
+        runApplicationId,
+      });
+
+      // A resumed step's quota was checked when it first ran and paused.
+      const nodeRunRefusal = isDefined(resumedThreadId)
+        ? undefined
+        : await this.getNodeRunRefusal({ workspaceId, billingSpenders });
+
+      if (isDefined(nodeRunRefusal)) {
+        return nodeRunRefusal;
+      }
+
       return await workflowAction.execute({
         currentStepId: stepId,
         steps,
@@ -469,15 +603,13 @@ export class WorkflowExecutorWorkspaceService {
           workflowRunId,
           workspaceId,
         },
+        resumedThreadId,
+        previousStepLog,
       });
     } catch (error) {
-      const isUserError =
-        error instanceof WorkflowStepExecutorException &&
-        (error.code === WorkflowStepExecutorExceptionCode.INVALID_STEP_TYPE ||
-          error.code === WorkflowStepExecutorExceptionCode.INVALID_STEP_INPUT ||
-          error.code === WorkflowStepExecutorExceptionCode.STEP_NOT_FOUND);
+      const isUserError = isUserFacingWorkflowExecutorError(error);
 
-      if (!isUserError) {
+      if (!isUserError && shouldCaptureException(error)) {
         this.exceptionHandlerService.captureExceptions([error], {
           workspace: { id: workspaceId },
         });
@@ -491,6 +623,7 @@ export class WorkflowExecutorWorkspaceService {
 
       return {
         error: error.message ?? 'Execution result error, no data or error',
+        isUserError,
       };
     }
   }
@@ -594,6 +727,52 @@ export class WorkflowExecutorWorkspaceService {
         shouldComputeWorkflowRunStatus: false,
         executedStepsCount,
       });
+    }
+  }
+
+  // a step that failed after resuming on an answer retries from that conversation, so the
+  // person is not asked again and an approved call does not run a second time
+  private async scheduleStepRetry({
+    stepId,
+    resumedThreadId,
+    error,
+    retryDelayMs,
+    workflowRunId,
+    workspaceId,
+  }: {
+    stepId: string;
+    resumedThreadId: string | undefined;
+    error: string;
+    retryDelayMs: number;
+    workflowRunId: string;
+    workspaceId: string;
+  }) {
+    await this.workflowRunWorkspaceService.moveStepToRetry({
+      stepId,
+      resumedThreadId,
+      error,
+      workflowRunId,
+      workspaceId,
+    });
+
+    try {
+      await this.messageQueueService.add<RunWorkflowJobData>(
+        RUN_WORKFLOW_JOB_NAME,
+        {
+          workspaceId,
+          workflowRunId,
+          stepIdsToRetry: [stepId],
+        },
+        { ...buildRunWorkflowJobOptions(workflowRunId), delay: retryDelayMs },
+      );
+    } catch (enqueueError) {
+      await this.workflowRunWorkspaceService.updateWorkflowRunStepInfos({
+        stepInfos: { [stepId]: { status: StepStatus.FAILED, error } },
+        workflowRunId,
+        workspaceId,
+      });
+
+      throw enqueueError;
     }
   }
 

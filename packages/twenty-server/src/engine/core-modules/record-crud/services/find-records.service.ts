@@ -1,12 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import { QUERY_MAX_RECORDS } from 'twenty-shared/constants';
-import { OrderByDirection, type ObjectRecord } from 'twenty-shared/types';
+import { type ObjectRecord } from 'twenty-shared/types';
 
 import { type ObjectRecordOrderBy } from 'src/engine/api/graphql/workspace-query-builder/interfaces/object-record.interface';
 
 import { isNonEmptyArray } from '@sniptt/guards';
 import { CommonFindManyQueryRunnerService } from 'src/engine/api/common/common-query-runners/common-find-many-query-runner.service';
+import { DEFAULT_ID_ORDER_BY_TIEBREAKER } from 'src/engine/api/common/constants/default-id-order-by-tiebreaker.constant';
+import { getRelationsSelectFields } from 'src/engine/api/common/common-select-fields/utils/get-relations-select-fields.util';
 import { CommonApiContextBuilderService } from 'src/engine/core-modules/record-crud/services/common-api-context-builder.service';
 import { type FindRecordsParams } from 'src/engine/core-modules/record-crud/types/find-records-params.type';
 import { type FindRecordsResult } from 'src/engine/core-modules/record-crud/types/find-records-result.type';
@@ -52,7 +54,9 @@ export class FindRecordsService {
         queryRunnerContext,
         selectedFields: allSelectableFields,
         flatObjectMetadata,
+        flatObjectMetadataMaps,
         flatFieldMetadataMaps,
+        objectsPermissions,
       } = await this.commonApiContextBuilder.build({
         authContext,
         objectName,
@@ -68,18 +72,28 @@ export class FindRecordsService {
               objectName,
               flatObjectMetadata,
               flatFieldMetadataMaps,
+              flatObjectMetadataMaps,
               selectedFields: allSelectableFields,
+              objectsPermissions,
+              selectableRelationFields: getRelationsSelectFields({
+                flatObjectMetadataMaps,
+                flatFieldMetadataMaps,
+                flatObjectMetadata,
+                objectsPermissions,
+                depth: 1,
+                onlyUseLabelIdentifierFieldsInRelations: true,
+              }),
             })
           : { effectiveSelectedFields: allSelectableFields, warnings: [] };
 
       // Add id to orderBy for consistent pagination
       const orderByWithIdCondition: ObjectRecordOrderBy = [
         ...(orderBy ?? []).filter((item) => item !== undefined),
-        { id: OrderByDirection.AscNullsFirst },
+        DEFAULT_ID_ORDER_BY_TIEBREAKER,
       ];
 
       const {
-        results: { records, totalCount },
+        results: { records, totalCount, pageInfo },
       } = await this.commonFindManyRunner.execute(
         {
           filter,
@@ -108,7 +122,8 @@ export class FindRecordsService {
         message: `Found ${records.length} ${objectName} records`,
         result: {
           records,
-          count: totalCount,
+          count: totalCount ?? 0,
+          hasNextPage: pageInfo.hasNextPage,
         },
         ...(isNonEmptyArray(warnings) ? { warnings: warnings } : {}),
         recordReferences,

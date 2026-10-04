@@ -5,8 +5,7 @@ import { pageLayoutEditingWidgetIdComponentState } from '@/page-layout/states/pa
 import { pageLayoutTabSettingsOpenTabIdComponentState } from '@/page-layout/states/pageLayoutTabSettingsOpenTabIdComponentState';
 import { usePageLayoutHeaderInfo } from '@/side-panel/components/hooks/usePageLayoutHeaderInfo';
 import { useUpdateSidePanelPageInfo } from '@/side-panel/hooks/useUpdateSidePanelPageInfo';
-import { sidePanelPageInfoState } from '@/side-panel/states/sidePanelPageInfoState';
-import { sidePanelPageState } from '@/side-panel/states/sidePanelPageState';
+import { sidePanelPageInfoSelector } from '@/side-panel/states/sidePanelPageInfoSelector';
 import { sidePanelShouldFocusTitleInputComponentState } from '@/side-panel/states/sidePanelShouldFocusTitleInputComponentState';
 import { IconPicker } from '@/ui/input/components/IconPicker';
 import { TitleInput } from '@/ui/input/components/TitleInput';
@@ -16,12 +15,12 @@ import { useAtomStateValue } from '@/ui/utilities/state/jotai/hooks/useAtomState
 import { css } from '@linaria/core';
 import { styled } from '@linaria/react';
 import { isNonEmptyString } from '@sniptt/guards';
-import { useContext, useState } from 'react';
+import { useState } from 'react';
 import { SidePanelPages } from 'twenty-shared/types';
 import { isDefined } from 'twenty-shared/utils';
 import { useIcons } from 'twenty-ui/icon';
-import { ThemeContext } from 'twenty-ui/theme-constants';
-import { SidePanelPageInfoLayout } from './SidePanelPageInfoLayout';
+import { useTheme } from 'twenty-ui/theme';
+import { HeaderIdentifier } from '@/ui/layout/page/components/HeaderIdentifier';
 
 const StyledClickableIconWrapper = styled.div`
   cursor: pointer;
@@ -39,10 +38,10 @@ export const SidePanelPageLayoutInfoContent = ({
 }: {
   pageLayoutId: string;
 }) => {
-  const { theme } = useContext(ThemeContext);
+  const theme = useTheme();
   const { getIcon } = useIcons();
-  const sidePanelPage = useAtomStateValue(sidePanelPageState);
-  const sidePanelPageInfo = useAtomStateValue(sidePanelPageInfoState);
+  const sidePanelPageInfo = useAtomStateValue(sidePanelPageInfoSelector);
+  const sidePanelPage = sidePanelPageInfo.page;
 
   const [sidePanelShouldFocusTitleInput, setSidePanelShouldFocusTitleInput] =
     useAtomComponentState(
@@ -161,7 +160,7 @@ export const SidePanelPageLayoutInfoContent = ({
     );
 
   return (
-    <SidePanelPageInfoLayout
+    <HeaderIdentifier
       icon={iconElement}
       iconColor={headerIconColor}
       title={

@@ -14,6 +14,7 @@ import {
   ViewKey,
 } from 'twenty-shared/types';
 
+import { type AuthoredOverrides } from 'src/engine/metadata-modules/overrides/types/authored-overrides.type';
 import { UUIDScalarType } from 'src/engine/api/graphql/workspace-schema-builder/graphql-types/scalars';
 import { ViewFieldGroupDTO } from 'src/engine/metadata-modules/view-field-group/dtos/view-field-group.dto';
 import { type ViewOverrides } from 'src/engine/metadata-modules/view/entities/view.entity';
@@ -34,6 +35,15 @@ registerEnumType(ViewVisibility, { name: 'ViewVisibility' });
 export class ViewDTO {
   @Field(() => UUIDScalarType)
   id: string;
+
+  @Field(() => UUIDScalarType, { nullable: false })
+  universalIdentifier: string;
+
+  @Field(() => UUIDScalarType, { nullable: false })
+  applicationId: string;
+
+  @Field({ nullable: false })
+  isSystemSideEffect: boolean;
 
   @Field({ nullable: false })
   name: string;
@@ -80,6 +90,10 @@ export class ViewDTO {
 
   @Field(() => Int, { nullable: true })
   kanbanColumnWidth?: number | null;
+
+  // Nullable since cached views can predate the column and Int! fails the query
+  @Field(() => Int, { nullable: true })
+  groupLoadLimit?: number | null;
 
   @Field(() => UUIDScalarType, { nullable: true })
   calendarFieldMetadataId?: string | null;
@@ -135,5 +149,5 @@ export class ViewDTO {
   isActive: boolean;
 
   @HideField()
-  overrides?: ViewOverrides | null;
+  overrides?: AuthoredOverrides<ViewOverrides> | null;
 }

@@ -13,7 +13,7 @@ import { parseFilterRestRequest } from 'src/engine/api/rest/input-request-parser
 import { parseLimitRestRequest } from 'src/engine/api/rest/input-request-parsers/limit-parser-utils/parse-limit-rest-request.util';
 import { parseOrderByRestRequest } from 'src/engine/api/rest/input-request-parsers/order-by-parser-utils/parse-order-by-rest-request.util';
 import { parseStartingAfterRestRequest } from 'src/engine/api/rest/input-request-parsers/starting-after-parser-utils/parse-starting-after-rest-request.util';
-import { AuthenticatedRequest } from 'src/engine/api/rest/types/authenticated-request';
+import { AuthenticatedRequest } from 'src/engine/api/rest/types/authenticated-request.type';
 import { workspaceQueryRunnerRestApiExceptionHandler } from 'src/engine/api/rest/utils/workspace-query-runner-rest-api-exception-handler.util';
 
 @Injectable()
@@ -72,7 +72,7 @@ export class RestApiFindManyHandler extends RestApiBaseHandler {
 
   private formatRestResponse(
     records: ObjectRecord[],
-    aggregatedValues: Record<string, number>,
+    aggregatedValues: Record<string, number> | undefined,
     objectNamePlural: string,
     pageInfo: PageInfo,
   ) {
@@ -80,7 +80,7 @@ export class RestApiFindManyHandler extends RestApiBaseHandler {
       data: {
         [objectNamePlural]: records,
       },
-      totalCount: Number(aggregatedValues.totalCount),
+      totalCount: Number(aggregatedValues?.totalCount ?? 0),
       pageInfo,
     };
   }
