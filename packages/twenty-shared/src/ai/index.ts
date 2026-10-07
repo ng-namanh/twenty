@@ -36,6 +36,7 @@ export { PROPOSE_TOOL_CALL_TOOL_STATUSES } from './constants/propose-tool-call-t
 export { PROPOSED_TOOL_CALL_TEMPLATES } from './constants/proposed-tool-call-templates.const';
 export { REQUEST_FORM_TOOL_NAME } from './constants/request-form-tool-name.const';
 export { ToolCategory } from './constants/tool-category.const';
+export { agentRunSummarySchema } from './schemas/agent-run-summary-schema';
 export type { AgentChatSubscriptionEvent } from './types/AgentChatSubscriptionEvent';
 export type {
   AgentResponseFormatType,
@@ -47,6 +48,8 @@ export type {
   AgentResponseFieldType,
   AgentResponseSchema,
 } from './types/AgentResponseSchema';
+export type { AgentRunSummary } from './types/AgentRunSummary';
+export type { AgentRunToolCallLog } from './types/AgentRunToolCallLog';
 export type { AskQuestionAnswer } from './types/AskQuestionAnswer';
 export type { AskQuestionItem } from './types/AskQuestionItem';
 export type { AskQuestionOption } from './types/AskQuestionOption';
@@ -71,7 +74,6 @@ export type {
 } from './types/ExtendedUIMessage';
 export type { ExtendedUIMessagePart } from './types/ExtendedUIMessagePart';
 export type { ModelConfiguration } from './types/ModelConfiguration';
-export type { NavigateAppToolOutput } from './types/NavigateAppToolOutput';
 export type { ProposedToolCall } from './types/ProposedToolCall';
 export type { ProposedToolCallTemplate } from './types/ProposedToolCallTemplate';
 export type { ProposeToolCallToolInput } from './types/ProposeToolCallToolInput';

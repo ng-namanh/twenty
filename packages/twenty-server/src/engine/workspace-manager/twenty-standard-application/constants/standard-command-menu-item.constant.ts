@@ -1060,6 +1060,66 @@ export const STANDARD_COMMAND_MENU_ITEMS = {
     engineComponentKey: EngineComponentKey.SNOOZE_AI_CHAT,
     hotKeys: ['H'],
   },
+  subscribeToAiChat: {
+    universalIdentifier: 'bf5345f0-14d3-438b-ab02-1daa5386743f',
+    label: i18nLabel(
+      msg({ message: `Subscribe`, context: 'commandMenuItem.label' }),
+    ),
+    icon: 'IconBell',
+    isPinned: false,
+    position: 78,
+    shortLabel: i18nLabel(
+      msg({ message: `Subscribe`, context: 'commandMenuItem.shortLabel' }),
+    ),
+    availabilityType: CommandMenuItemAvailabilityType.RECORD_SELECTION,
+    conditionalAvailabilityExpression:
+      'numberOfSelectedRecords >= 1 and permissionFlags.AI and noneDefined(selectedRecords, "deletedAt") and everyEquals(selectedRecords, "inboxStatus.isSubscribed", false)',
+    availabilityObjectMetadataUniversalIdentifier:
+      STANDARD_OBJECTS.agentChatThread.universalIdentifier,
+    frontComponentUniversalIdentifier: null,
+    engineComponentKey: EngineComponentKey.SUBSCRIBE_TO_AI_CHAT,
+    hotKeys: null,
+  },
+  unsubscribeFromAiChat: {
+    universalIdentifier: '31dbf857-d442-447a-be76-e4eb8ef34fcf',
+    label: i18nLabel(
+      msg({ message: `Unsubscribe`, context: 'commandMenuItem.label' }),
+    ),
+    icon: 'IconBellOff',
+    isPinned: false,
+    position: 79,
+    shortLabel: i18nLabel(
+      msg({ message: `Unsubscribe`, context: 'commandMenuItem.shortLabel' }),
+    ),
+    availabilityType: CommandMenuItemAvailabilityType.RECORD_SELECTION,
+    conditionalAvailabilityExpression:
+      'numberOfSelectedRecords >= 1 and permissionFlags.AI and noneDefined(selectedRecords, "deletedAt") and everyEquals(selectedRecords, "inboxStatus.isSubscribed", true) and noneEquals(selectedRecords, "inboxStatus.isAssignedToMe", true)',
+    availabilityObjectMetadataUniversalIdentifier:
+      STANDARD_OBJECTS.agentChatThread.universalIdentifier,
+    frontComponentUniversalIdentifier: null,
+    engineComponentKey: EngineComponentKey.UNSUBSCRIBE_FROM_AI_CHAT,
+    hotKeys: null,
+  },
+  assignAiChat: {
+    universalIdentifier: '8e5a5bf5-fc62-4fe8-a419-a01051306668',
+    label: i18nLabel(
+      msg({ message: `Assign`, context: 'commandMenuItem.label' }),
+    ),
+    icon: 'IconUsers',
+    isPinned: true,
+    position: 80,
+    shortLabel: i18nLabel(
+      msg({ message: `Assign`, context: 'commandMenuItem.shortLabel' }),
+    ),
+    availabilityType: CommandMenuItemAvailabilityType.RECORD_SELECTION,
+    conditionalAvailabilityExpression:
+      'numberOfSelectedRecords >= 1 and permissionFlags.AI and noneDefined(selectedRecords, "deletedAt") and noneEquals(selectedRecords, "recordPermissions.canUpdate", false)',
+    availabilityObjectMetadataUniversalIdentifier:
+      STANDARD_OBJECTS.agentChatThread.universalIdentifier,
+    frontComponentUniversalIdentifier: null,
+    engineComponentKey: EngineComponentKey.ASSIGN_AI_CHAT,
+    hotKeys: ['A'],
+  },
   // Chats keep their pinned Share item; it is a system object, so this one never shows there
   shareAnyRecord: {
     universalIdentifier: '1e703e2c-9f3a-4a23-8448-107b01be509c',

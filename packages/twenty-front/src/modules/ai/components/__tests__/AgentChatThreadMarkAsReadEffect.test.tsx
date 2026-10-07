@@ -44,6 +44,10 @@ describe('AgentChatThreadMarkAsReadEffect', () => {
         lastReadAt: '2026-10-01T09:00:00.000Z',
         archivedAt: null,
         snoozedUntil: null,
+        isSubscribed: true,
+        lastMentionedAt: null,
+        id: 'participant-id',
+        updatedAt: '2026-10-01T10:00:00.000Z',
       },
     });
     jotaiStore.set(agentChatDisplayedThreadState.atom, THREAD_ID);

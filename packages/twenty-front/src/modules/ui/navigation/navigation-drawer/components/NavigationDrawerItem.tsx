@@ -1,15 +1,16 @@
 import { type NavigationDrawerItemProps } from '@/ui/navigation/navigation-drawer/types/NavigationDrawerItemProps';
-import { VisibilityHidden } from 'twenty-ui/primitives/accessibility';
+import { VisuallyHidden } from 'twenty-ui/primitives/accessibility';
 import { isObject } from '@sniptt/guards';
-import { useIsNavigationDrawerContentExpanded } from '@/navigation/hooks/useIsNavigationDrawerContentExpanded';
+import { useIsNavigationDrawerContentExpanded } from '@/ui/navigation/navigation-drawer/hooks/useIsNavigationDrawerContentExpanded';
 import { TooltipDelay } from '@/ui/layout/tooltip/constants/TooltipDelay';
 import { NavigationDrawerAnimatedCollapseWrapper } from '@/ui/navigation/navigation-drawer/components/NavigationDrawerAnimatedCollapseWrapper';
 import { NavigationDrawerItemBreadcrumb } from '@/ui/navigation/navigation-drawer/components/NavigationDrawerItemBreadcrumb';
+import { StyledNavigationDrawerUnreadDot } from '@/ui/navigation/navigation-drawer/components/StyledNavigationDrawerUnreadDot';
 import { NAVIGATION_DRAWER_COLLAPSED_BUTTON_SIZE } from '@/ui/navigation/navigation-drawer/constants/NavigationDrawerCollapsedButtonSize';
 import { NavigationDrawerItemEditingContext } from '@/ui/navigation/navigation-drawer/contexts/NavigationDrawerItemEditingContext';
 import { useNavigationDrawerTooltip } from '@/ui/navigation/navigation-drawer/hooks/useNavigationDrawerTooltip';
 import { isNavigationDrawerExpandedState } from '@/ui/navigation/states/isNavigationDrawerExpanded';
-import { useMouseDownNavigation } from '@/ui/navigation/utils/hooks/useMouseDownNavigation';
+import { useMouseDownNavigation } from '@/ui/navigation/hooks/useMouseDownNavigation';
 import { useIsMobile } from 'twenty-ui/utilities';
 import { useSetAtomState } from '@/ui/utilities/state/jotai/hooks/useSetAtomState';
 import { styled } from '@linaria/react';
@@ -165,17 +166,6 @@ const StyledIcon = styled.div`
   justify-content: center;
   margin-right: ${themeCssVariables.spacing[2]};
   position: relative;
-`;
-
-// A collapsed drawer hides the label, so an unread item is marked on its icon
-const StyledCollapsedUnreadDot = styled.span`
-  background: ${themeCssVariables.color.blue};
-  border-radius: 50%;
-  height: 6px;
-  position: absolute;
-  right: -2px;
-  top: -2px;
-  width: 6px;
 `;
 
 const StyledRightOptionsContainer = styled.div`
@@ -363,7 +353,9 @@ export const NavigationDrawerItem = ({
                         : 'currentColor'
                     }
                   />
-                  {isUnread && !isExpanded && <StyledCollapsedUnreadDot />}
+                  {isUnread && !isExpanded && (
+                    <StyledNavigationDrawerUnreadDot />
+                  )}
                 </StyledIcon>
               )
             )}
@@ -376,7 +368,7 @@ export const NavigationDrawerItem = ({
                       <StyledItemLabel $isUnread={isUnread}>
                         {label}
                         {isUnread && (
-                          <VisibilityHidden>{t`, unread`}</VisibilityHidden>
+                          <VisuallyHidden>{t`, unread`}</VisuallyHidden>
                         )}
                       </StyledItemLabel>
                       {secondaryLabel && (

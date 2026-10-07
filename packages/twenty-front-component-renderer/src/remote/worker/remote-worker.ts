@@ -1,7 +1,10 @@
 import '@remote-dom/core/polyfill';
 import '@remote-dom/react/polyfill';
 
-import '../generated/remote-elements';
+import {
+  HtmlInputElement,
+  HtmlTextareaElement,
+} from '../generated/remote-elements';
 
 import { ThreadMessagePort } from '@quilted/threads';
 
@@ -10,7 +13,11 @@ import { isDefined } from 'twenty-shared/utils';
 import { frontComponentHostCommunicationApi } from '@/remote/worker/thread/states/frontComponentHostCommunicationApi';
 import { HTML_TAG_TO_CUSTOM_ELEMENT_TAG } from '@/constants/HtmlTagToCustomElementTag';
 import { installClipboardPolyfill } from '@/polyfills/clipboard/utils/installClipboardPolyfill';
+import { installImageLoadingPolyfill } from '@/polyfills/image/utils/installImageLoadingPolyfill';
 import { workerActiveElementStore } from '@/polyfills/dom/states/workerActiveElementStore';
+import { installTextTreeWalkerPolyfill } from '@/polyfills/dom/utils/installTextTreeWalkerPolyfill';
+import { installInputSelectionPolyfill } from '@/polyfills/input-selection/utils/installInputSelectionPolyfill';
+import { workerInputSelectionStore } from '@/polyfills/input-selection/states/workerInputSelectionStore';
 import { workerFocusTransport } from '@/polyfills/dom/states/workerFocusTransport';
 import { installActiveElementDetachmentHook } from '@/polyfills/dom/utils/installActiveElementDetachmentHook';
 import { installClassAttributeAccessors } from '@/polyfills/dom/utils/installClassAttributeAccessors';
@@ -18,14 +25,19 @@ import { installCompareDocumentPositionPolyfill } from '@/polyfills/dom/utils/in
 import { installDocumentActiveElementPolyfill } from '@/polyfills/dom/utils/installDocumentActiveElementPolyfill';
 import { findElementByRemoteId } from '@/polyfills/dom/utils/findElementByRemoteId';
 import { installDocumentGetElementById } from '@/polyfills/dom/utils/installDocumentGetElementById';
+import { installElementDatasetPolyfill } from '@/polyfills/dom/utils/installElementDatasetPolyfill';
+import { installElementClickMethodPolyfill } from '@/polyfills/dom/utils/installElementClickMethodPolyfill';
 import { installFocusAndBlurMethodsPolyfill } from '@/polyfills/dom/utils/installFocusAndBlurMethodsPolyfill';
 import { installGetComputedStyle } from '@/polyfills/dom/utils/installGetComputedStyle';
 import { installGetElementsByClassName } from '@/polyfills/dom/utils/installGetElementsByClassName';
 import { installGetRootNodePolyfill } from '@/polyfills/dom/utils/installGetRootNodePolyfill';
+import { installInputClickActivationPolyfill } from '@/polyfills/dom/utils/installInputClickActivationPolyfill';
 import { installLocalStyleOnBaseElements } from '@/polyfills/dom/utils/installLocalStyleOnBaseElements';
 import { installMutationObserver } from '@/polyfills/dom/utils/installMutationObserver';
 import { installNodeContainsPolyfill } from '@/polyfills/dom/utils/installNodeContainsPolyfill';
 import { resolvePolyfillHooks } from '@/polyfills/dom/utils/resolvePolyfillHooks';
+import { installEventConstructorPolyfills } from '@/polyfills/events/utils/installEventConstructorPolyfills';
+import { installHostEventRetargetingPolyfill } from '@/polyfills/events/utils/installHostEventRetargetingPolyfill';
 import { installSelectorMethodsPolyfill } from '@/polyfills/selectors/utils/installSelectorMethodsPolyfill';
 import { workerGeometryStore } from '@/polyfills/geometry/states/workerGeometryStore';
 import { installElementGeometryPolyfill } from '@/polyfills/geometry/utils/installElementGeometryPolyfill';
@@ -59,6 +71,14 @@ patchRemoteElementAttributes();
 installAriaBooleanPropertyAccessors();
 installErrorEventBridge();
 
+installTextTreeWalkerPolyfill({ globalScope: toGlobalScopeRecord(globalThis) });
+installInputSelectionPolyfill({
+  elementPrototypes: [
+    HtmlInputElement.prototype,
+    HtmlTextareaElement.prototype,
+  ],
+  selectionStore: workerInputSelectionStore,
+});
 installDocumentGetElementById(document);
 installGetElementsByClassName(Element.prototype);
 installGetElementsByClassName(document);
@@ -67,6 +87,7 @@ installClassAttributeAccessors({
   remoteElementPrototypes: resolveRemoteElementPrototypes(),
 });
 installLocalStyleOnBaseElements(Element.prototype);
+installElementDatasetPolyfill(Element.prototype);
 
 installNodeContainsPolyfill(Node.prototype);
 installCompareDocumentPositionPolyfill({
@@ -99,8 +120,14 @@ installActiveElementDetachmentHook({
     resolveGlobalScopeInstallTargets(toGlobalScopeRecord(globalThis)),
   ),
   activeElementStore: workerActiveElementStore,
-  onRemoveSubtree: workerFocusTransport.blurFocusedElementWithinSubtree,
+  onRemoveSubtree: (node) => {
+    workerFocusTransport.blurFocusedElementWithinSubtree(node);
+    workerInputSelectionStore.scheduleDetachedElementSweep();
+  },
 });
+installHostEventRetargetingPolyfill(HTMLElement.prototype);
+installElementClickMethodPolyfill(HTMLElement.prototype);
+installInputClickActivationPolyfill(HtmlInputElement.prototype);
 
 installGetComputedStyle(toGlobalScopeRecord(globalThis));
 
@@ -126,6 +153,10 @@ installWindowAliasesPolyfill({
 installMatchMediaPolyfill({
   globalScope: toGlobalScopeRecord(globalThis),
   environmentSource: mediaQueryEnvironmentSource,
+});
+
+installEventConstructorPolyfills({
+  globalScope: toGlobalScopeRecord(globalThis),
 });
 
 installStorageBridge({
@@ -158,6 +189,22 @@ exposeGlobals({
 });
 
 let hostThread: FrontComponentHostThread | null = null;
+
+installImageLoadingPolyfill({
+  globalScope: toGlobalScopeRecord(globalThis),
+  loadImage: (request) => {
+    if (!isDefined(hostThread)) {
+      return Promise.reject(
+        new Error('Image loading transport is not connected'),
+      );
+    }
+
+    return hostThread.imports.loadImage(request);
+  },
+  cancelImage: async (requestId) => {
+    await hostThread?.imports.cancelImage(requestId);
+  },
+});
 
 const workerExports: WorkerExports = {
   render: async (connection, renderContext) => {

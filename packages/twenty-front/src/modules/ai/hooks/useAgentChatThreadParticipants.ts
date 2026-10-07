@@ -3,7 +3,7 @@ import { useApolloClient } from '@apollo/client/react';
 import { useStore } from 'jotai';
 import { useCallback } from 'react';
 import { isDefined } from 'twenty-shared/utils';
-import { useToast } from 'twenty-ui/components';
+import { useToast } from 'twenty-ui/components/feedback';
 
 import { agentChatThreadParticipantsState } from '@/ai/states/agentChatThreadParticipantsState';
 import {
@@ -15,11 +15,12 @@ import { getToastOptionsFromError } from '@/error-handler/utils/getToastOptionsF
 import {
   type AgentChatThreadParticipantFieldsFragment,
   ArchiveAgentChatThreadDocument,
-  GetMyAgentChatThreadParticipantsDocument,
   MarkAgentChatThreadAsReadDocument,
   MarkAgentChatThreadAsUnreadDocument,
   MoveAgentChatThreadToInboxDocument,
   SnoozeAgentChatThreadDocument,
+  SubscribeToAgentChatThreadDocument,
+  UnsubscribeFromAgentChatThreadDocument,
 } from '~/generated-metadata/graphql';
 
 export const useAgentChatThreadParticipants = () => {
@@ -27,31 +28,7 @@ export const useAgentChatThreadParticipants = () => {
   const store = useStore();
   const { enqueueToast } = useToast();
 
-  const refreshAgentChatThreadParticipants = useCallback(async () => {
-    const result = await client
-      .query({
-        query: GetMyAgentChatThreadParticipantsDocument,
-        fetchPolicy: 'network-only',
-      })
-      .catch(() => undefined);
-
-    if (!isDefined(result?.data)) {
-      return;
-    }
-
-    store.set(
-      agentChatThreadParticipantsState.atom,
-      Object.fromEntries(
-        result.data.myAgentChatThreadParticipants.map((participant) => [
-          participant.threadId,
-          participant,
-        ]),
-      ),
-    );
-  }, [client, store]);
-
-  // The change shows right away; if the server refuses it, the visit is put
-  // back and the member's state is reloaded from the server
+  // The change shows right away, and is put back if the server refuses it
   const updateParticipant = useCallback(
     async <TVariables extends { threadId: string }>({
       mutation,
@@ -66,6 +43,9 @@ export const useAgentChatThreadParticipants = () => {
     }) => {
       const { threadId } = variables;
       const previousVisit = store.get(agentChatThreadVisitState.atom);
+      const previousParticipant = store.get(
+        agentChatThreadParticipantsState.atom,
+      )?.[threadId];
 
       if (isDefined(optimisticVisit)) {
         store.set(agentChatThreadVisitState.atom, (visit) =>
@@ -87,6 +67,9 @@ export const useAgentChatThreadParticipants = () => {
             }
           : participants,
       );
+      const optimisticEntry = store.get(
+        agentChatThreadParticipantsState.atom,
+      )?.[threadId];
 
       try {
         await client.mutate({ mutation, variables });
@@ -99,10 +82,25 @@ export const useAgentChatThreadParticipants = () => {
           );
         }
 
-        await refreshAgentChatThreadParticipants();
+        // A newer row may have arrived since, and is kept
+        store.set(agentChatThreadParticipantsState.atom, (participants) => {
+          if (
+            !isDefined(participants) ||
+            participants[threadId] !== optimisticEntry
+          ) {
+            return participants;
+          }
+
+          const { [threadId]: _optimisticEntry, ...otherParticipants } =
+            participants;
+
+          return isDefined(previousParticipant)
+            ? { ...otherParticipants, [threadId]: previousParticipant }
+            : otherParticipants;
+        });
       }
     },
-    [client, enqueueToast, refreshAgentChatThreadParticipants, store],
+    [client, enqueueToast, store],
   );
 
   const markAgentChatThreadAsRead = useCallback(
@@ -151,8 +149,6 @@ export const useAgentChatThreadParticipants = () => {
     [updateParticipant],
   );
 
-  // One chat at a time: a failed update reloads every chat's state, which
-  // would undo the optimistic change of an update still on its way
   const snoozeAgentChatThreads = useCallback(
     async ({
       threadIds,
@@ -161,16 +157,19 @@ export const useAgentChatThreadParticipants = () => {
       threadIds: string[];
       snoozedUntil: Date;
     }) => {
-      for (const threadId of threadIds) {
-        await updateParticipant({
-          mutation: SnoozeAgentChatThreadDocument,
-          variables: { threadId, snoozedUntil: snoozedUntil.toISOString() },
-          optimisticParticipant: {
-            archivedAt: new Date().toISOString(),
-            snoozedUntil: snoozedUntil.toISOString(),
-          },
-        });
-      }
+      await Promise.all(
+        threadIds.map((threadId) =>
+          updateParticipant({
+            mutation: SnoozeAgentChatThreadDocument,
+            variables: { threadId, snoozedUntil: snoozedUntil.toISOString() },
+            optimisticParticipant: {
+              archivedAt: new Date().toISOString(),
+              snoozedUntil: snoozedUntil.toISOString(),
+              isSubscribed: true,
+            },
+          }),
+        ),
+      );
     },
     [updateParticipant],
   );
@@ -180,17 +179,46 @@ export const useAgentChatThreadParticipants = () => {
       updateParticipant({
         mutation: MoveAgentChatThreadToInboxDocument,
         variables: { threadId },
-        optimisticParticipant: { archivedAt: null, snoozedUntil: null },
+        optimisticParticipant: {
+          archivedAt: null,
+          snoozedUntil: null,
+          isSubscribed: true,
+        },
+      }),
+    [updateParticipant],
+  );
+
+  const subscribeToAgentChatThread = useCallback(
+    (threadId: string) =>
+      updateParticipant({
+        mutation: SubscribeToAgentChatThreadDocument,
+        variables: { threadId },
+        optimisticParticipant: { isSubscribed: true },
+      }),
+    [updateParticipant],
+  );
+
+  const unsubscribeFromAgentChatThread = useCallback(
+    (threadId: string) =>
+      updateParticipant({
+        mutation: UnsubscribeFromAgentChatThreadDocument,
+        variables: { threadId },
+        optimisticParticipant: {
+          isSubscribed: false,
+          archivedAt: new Date().toISOString(),
+          snoozedUntil: null,
+        },
       }),
     [updateParticipant],
   );
 
   return {
-    refreshAgentChatThreadParticipants,
     markAgentChatThreadAsRead,
     markAgentChatThreadAsUnread,
     archiveAgentChatThread,
     snoozeAgentChatThreads,
     moveAgentChatThreadToInbox,
+    subscribeToAgentChatThread,
+    unsubscribeFromAgentChatThread,
   };
 };

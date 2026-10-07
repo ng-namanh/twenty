@@ -11,10 +11,11 @@ import { AGENT_MESSAGE_ROLE } from '@/ai/constants/AgentMessageRole';
 import { AiChatAssistantMessageRenderer } from '@/ai/components/AiChatAssistantMessageRenderer';
 import { AiChatErrorRenderer } from '@/ai/components/AiChatErrorRenderer';
 import { agentChatFirstUnreadMessageIdComponentSelector } from '@/ai/states/selectors/agentChatFirstUnreadMessageIdComponentSelector';
+import { agentChatIsMessageBeforeFirstUserMessageComponentFamilySelector } from '@/ai/states/selectors/agentChatIsMessageBeforeFirstUserMessageComponentFamilySelector';
 import { agentChatMessageComponentFamilySelector } from '@/ai/states/selectors/agentChatMessageComponentFamilySelector';
 import { getAgentChatSenderLabel } from '@/ai/utils/getAgentChatSenderLabel';
 import { type AiChatError } from '@/ai/types/AiChatError';
-import { LightCopyIconButton } from '@/object-record/record-field/ui/components/LightCopyIconButton';
+import { LightCopyIconButton } from '@/ui/input/components/LightCopyIconButton';
 import { useAtomComponentFamilySelectorValue } from '@/ui/utilities/state/jotai/hooks/useAtomComponentFamilySelectorValue';
 import { useAtomComponentSelectorValue } from '@/ui/utilities/state/jotai/hooks/useAtomComponentSelectorValue';
 import { useAtomStateValue } from '@/ui/utilities/state/jotai/hooks/useAtomStateValue';
@@ -22,8 +23,8 @@ import { useAtomStateValue } from '@/ui/utilities/state/jotai/hooks/useAtomState
 import { isExtendedFileUIPart } from 'twenty-shared/ai';
 import { isDefined } from 'twenty-shared/utils';
 import { themeCssVariables } from 'twenty-ui/theme';
-import { HorizontalSeparator } from 'twenty-ui/primitives/layout';
-import { dateLocaleState } from '~/localization/states/dateLocaleState';
+import { LabeledDivider } from '@/ui/layout/line/components/LabeledDivider';
+import { dateLocaleState } from '@/localization/states/dateLocaleState';
 import { beautifyPastDateRelativeToNow } from '~/utils/date-utils';
 
 const StyledMessageBubble = styled.div<{ isUser?: boolean }>`
@@ -190,6 +191,11 @@ export const AiChatMessage = ({
     { messageId },
   );
 
+  const isMessageBeforeFirstUserMessage = useAtomComponentFamilySelectorValue(
+    agentChatIsMessageBeforeFirstUserMessageComponentFamilySelector,
+    { messageId },
+  );
+
   const { localeCatalog } = useAtomStateValue(dateLocaleState);
   const firstUnreadMessageId = useAtomComponentSelectorValue(
     agentChatFirstUnreadMessageIdComponentSelector,
@@ -218,18 +224,18 @@ export const AiChatMessage = ({
       isLastMessageStreaming={isLastMessageStreaming}
       messageParts={agentChatMessage.parts}
       hasError={shouldShowError}
+      shouldHideThinkingSteps={isMessageBeforeFirstUserMessage}
     />
   );
 
   return (
     <>
       {firstUnreadMessageId === messageId && (
-        <HorizontalSeparator
-          text={t`New`}
+        <LabeledDivider
           textPosition="end"
           color={themeCssVariables.tag.text.red}
           noMargin
-        />
+        >{t`New`}</LabeledDivider>
       )}
       <StyledMessageBubble isUser={isUser}>
         {isUser && isDefined(senderId) && (
